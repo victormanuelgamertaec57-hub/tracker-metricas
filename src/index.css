@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/* ================================================
+   TECH BLACK — Design System
+   ================================================ */
+
+:root {
+  /* Base palette */
+  --bg-base: #000000;
+  --bg-surface: #0A0A0C;
+  --bg-thumb: #050506;
+  --text-primary: #FFFFFF;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+  
+  /* Dividers */
+  --divider-strong: rgba(255,255,255,0.1);
+  --divider-soft: rgba(255,255,255,0.06);
+  
+  /* Brand accent - Electric blue */
+  --accent: #38BDF8;
+  --accent-dark: #000814;
+  --accent-glow: rgba(56, 189, 248, 0.35);
+  
+  /* Category colors */
+  --cat-ganador: #22C55E;
+  --cat-potencial: #38BDF8;
+  --cat-bueno: #64748B;
+  --cat-regular: #F59E0B;
+  --cat-apagar: #EF4444;
+  
+  /* Category glows */
+  --glow-ganador: rgba(34, 197, 94, 0.08);
+  --glow-potencial: rgba(56, 189, 248, 0.08);
+  --glow-bueno: rgba(100, 116, 139, 0.08);
+  --glow-regular: rgba(245, 158, 11, 0.08);
+  --glow-apagar: rgba(239, 68, 68, 0.08);
+  
+  /* Typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tabular numbers for metrics */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus states */
+input, select, textarea {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--divider-soft);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  transition: border-color 0.2s ease;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

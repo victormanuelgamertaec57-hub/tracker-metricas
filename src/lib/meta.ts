@@ -1,0 +1,122 @@
+import type { RawMetrics } from '../types'
+
+// El access token de Meta Ads NUNCA debe estar en el cliente.
+// Se lee desde META_ACCESS_TOKEN en las env vars de Netlify.
+
+const META_TOKEN_KEY = 'tracker-metricas:meta-token' // legacy, para migrar
+
+export interface MetaEntity {
+  id: string
+  name: string
+  status?: string
+  thumbnail?: string
+  thumbnailUrl?: string
+  videoUrl?: string
+  videoId?: string
+}
+
+export interface MetaSyncResult {
+  metrics: RawMetrics
+  thumbnailUrl?: string
+  videoUrl?: string
+  videoUnavailable?: boolean
+  adAccountId?: string
+}
+
+/**
+ * Migra el token legacy que el usuario pudo haber guardado en localStorage
+ * (versión anterior) y lo borra porque ya no se usa.
+ */
+export function migrateLegacyToken(): void {
+  if (localStorage.getItem(META_TOKEN_KEY)) {
+    localStorage.removeItem(META_TOKEN_KEY)
+  }
+}
+
+migrateLegacyToken()
+
+export type MetaLevel = 'accounts' | 'campaigns' | 'adsets' | 'ads'
+
+/**
+ * Llama a una Netlify Function. Distingue entre:
+ * - 404 → la function no está desplegada
+ * - HTML → Vite devolvió index.html en vez de la function (falta netlify dev)
+ * - 500/200 con error JSON → error de la function o de la API de Meta
+ */
+async function callMetaFunction<T>(url: string, init?: RequestInit): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(url, init)
+  } catch (err) {
+    throw new Error(
+      `No se pudo conectar con el servidor (${err instanceof Error ? err.message : 'error de red'}). Verifica tu conexión.`
+    )
+  }
+
+  const text = await response.text()
+  const trimmed = text.trim()
+
+  // 1. 404 primero: Netlify Dev devuelve "Function not found..." (texto plano, no JSON ni HTML)
+  if (response.status === 404) {
+    throw new Error(
+      `Función no desplegada (404). Verifica que el archivo exista en netlify/functions/ y que el nombre coincida con la URL.`
+    )
+  }
+
+  // 2. Detectar HTML (Vite devolvió index.html en vez de la function)
+  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<!doctype') || trimmed.startsWith('<html')) {
+    throw new Error(
+      'Función no encontrada. Estás corriendo `npm run dev` (Vite) en vez de `netlify dev`. Mata el server actual y arranca con `netlify dev` para que las Netlify Functions estén disponibles.'
+    )
+  }
+
+  // 3. Intentar parsear JSON (no confiar en Content-Type porque Netlify Dev a veces no lo envía)
+  let json: { error?: string; detail?: string; [k: string]: unknown } | null = null
+  try {
+    json = JSON.parse(text)
+  } catch {
+    throw new Error(
+      `Respuesta inválida del servidor (HTTP ${response.status}, no es JSON ni HTML): ${trimmed.slice(0, 200)}`
+    )
+  }
+
+  // 4. Errores de la function o de Meta Ads
+  if (!response.ok || json?.error) {
+    const metaDetail = json?.detail ? ` — ${json.detail}` : ''
+    const errorType = json?.error?.toString().includes('Meta API')
+      ? 'Error de Meta Ads'
+      : 'Error de la función'
+    throw new Error(`${errorType}: ${json?.error || `HTTP ${response.status}`}${metaDetail}`)
+  }
+
+  return json as T
+}
+
+/**
+ * Trae un nivel de la jerarquía de Meta Ads. El parentId es requerido
+ * para todos los niveles excepto 'accounts'.
+ */
+export async function fetchMetaLevel(
+  level: MetaLevel,
+  parentId?: string
+): Promise<MetaEntity[]> {
+  const params = new URLSearchParams({ level })
+  if (parentId) params.set('parentId', parentId)
+
+  const data = await callMetaFunction<{ items: MetaEntity[] }>(
+    `/.netlify/functions/meta-hierarchy?${params.toString()}`
+  )
+  return data.items || []
+}
+
+/**
+ * Sincroniza un creativo con Meta Ads vía Netlify Function.
+ * El token se lee del server (META_ACCESS_TOKEN env var).
+ */
+export async function syncCreativeWithMeta(adId: string): Promise<MetaSyncResult> {
+  return callMetaFunction<MetaSyncResult>('/.netlify/functions/meta-insights', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adId }),
+  })
+}

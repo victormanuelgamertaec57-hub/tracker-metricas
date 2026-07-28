@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[dev]
+  framework = "vite"
+  command = "vite"
+  port = 8888
+  targetPort = 5173
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
