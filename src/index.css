@@ -105,3 +105,16 @@ input:focus, select:focus, textarea:focus {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ================================================
+   CARD TILT — 3D hover effect for CreativeCard
+   Set --x, --y, --lift directly via JS (useTilt hook).
+   No React state involved — avoids re-renders on every mousemove.
+   ================================================ */
+.card-tilt {
+  transform: perspective(1000px)
+    translateY(var(--lift, 0px))
+    rotateX(calc(var(--y, 0) * -1deg))
+    rotateY(calc(var(--x, 0) * 1deg));
+  will-change: transform;
+}

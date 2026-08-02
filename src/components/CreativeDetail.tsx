@@ -357,7 +357,7 @@ export function CreativeDetail({
           )}
           <span className={`text-[11px] px-3 py-1.5 rounded-lg ${
             score.confidence === 'alta'
-              ? 'style'
+              ? ''
               : score.confidence === 'media'
               ? ''
               : ''

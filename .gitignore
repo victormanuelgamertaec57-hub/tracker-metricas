@@ -30,3 +30,4 @@ dist-ssr
 
 # Netlify
 .netlify
+netlify/functions/*.js

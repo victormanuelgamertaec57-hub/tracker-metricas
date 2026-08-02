@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import type { Creative } from '../types'
 import { scoreCreative } from '../lib/scoring'
@@ -49,32 +49,57 @@ function TemperatureBar({ score, category }: { score: number; category: string }
   )
 }
 
-// 3D tilt effect on hover
+// 3D tilt effect on hover.
+// Performance: writes CSS custom properties directly to the DOM via ref instead of
+// setState. With 10+ cards and 60fps mousemove, the old setState approach caused
+// hundreds of re-renders per second, each recalculating scoreCreative() and
+// computeDerivedMetrics(). The new approach: zero re-renders during hover.
 function useTilt() {
   const ref = useRef<HTMLDivElement>(null)
-  const [transform, setTransform] = useState('')
-  
+  const reducedMotionRef = useRef(false)
+
+  // Cache prefers-reduced-motion to avoid running matchMedia on every mousemove.
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    reducedMotionRef.current = mq.matches
+    const handler = (e: MediaQueryListEvent) => {
+      reducedMotionRef.current = e.matches
+    }
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!ref.current) return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    
+    if (!ref.current || reducedMotionRef.current) return
+
     const rect = ref.current.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
     const centerX = rect.width / 2
     const centerY = rect.height / 2
-    
-    const rotateX = ((y - centerY) / centerY) * -3
-    const rotateY = ((x - centerX) / centerX) * 3
-    
-    setTransform(`perspective(1000px) translateY(-2px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`)
+
+    // --x drives rotateY, --y drives rotateX (sign inverted via CSS calc).
+    // Range: -3 to 3, same as the previous implementation.
+    const tx = ((x - centerX) / centerX) * 3
+    const ty = ((y - centerY) / centerY) * 3
+
+    ref.current.style.setProperty('--x', String(tx))
+    ref.current.style.setProperty('--y', String(ty))
   }
-  
+
+  const handleMouseEnter = () => {
+    if (!ref.current || reducedMotionRef.current) return
+    ref.current.style.setProperty('--lift', '-2px')
+  }
+
   const handleMouseLeave = () => {
-    setTransform('perspective(1000px) translateY(0) rotateX(0) rotateY(0)')
+    if (!ref.current) return
+    ref.current.style.setProperty('--x', '0')
+    ref.current.style.setProperty('--y', '0')
+    ref.current.style.setProperty('--lift', '0px')
   }
-  
-  return { ref, transform, handleMouseMove, handleMouseLeave }
+
+  return { ref, handleMouseMove, handleMouseEnter, handleMouseLeave }
 }
 
 export function CreativeCard({
@@ -89,7 +114,7 @@ export function CreativeCard({
   const score = scoreCreative(creative)
   const style = CATEGORY_STYLE[score.category]
   const hasVideo = !!creative.videoUrl
-  const { ref, transform, handleMouseMove, handleMouseLeave } = useTilt()
+  const { ref, handleMouseMove, handleMouseEnter, handleMouseLeave } = useTilt()
   
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation()
@@ -108,15 +133,15 @@ export function CreativeCard({
     >
       <div
         ref={ref}
-        className="rounded-xl overflow-hidden cursor-pointer"
-        style={{ 
-          transform,
+        className="rounded-xl overflow-hidden cursor-pointer card-tilt"
+        style={{
           background: 'var(--bg-surface)',
           border: `1px solid ${style.border}`,
           boxShadow: `0 0 18px ${style.glow}`,
           transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
         }}
         onMouseMove={handleMouseMove}
+        onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         onClick={() => onOpen(creative.id)}
       >

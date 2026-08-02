@@ -7,7 +7,26 @@ import type {
   Category,
 } from '../types'
 
-const BENCHMARK_STORAGE_KEY = 'tracker-metricas:benchmarks'
+export const BENCHMARK_STORAGE_KEY = 'tracker-metricas:benchmarks'
+
+// Cache a nivel de módulo para evitar leer + parsear localStorage en cada getBenchmark().
+// Con N cards, scoreCreative() corre N veces por render → antes eran N lecturas + N JSON.parse.
+// Ahora: primer hit por nicho = lectura + parse, los siguientes = lookup O(1) en el Map.
+const benchmarkCache = new Map<string, NicheBenchmark>()
+
+/**
+ * Invalida el cache de benchmarks.
+ * - Sin argumentos: limpia todo (útil en tests, o tras importar todo de cero).
+ * - Con un nicho: borra solo esa entrada (útil al editar un nicho específico).
+ * Llamar desde NicheSettings tras guardar, o desde donde sea que se muten los overrides.
+ */
+export function invalidateBenchmarkCache(niche?: string): void {
+  if (niche === undefined) {
+    benchmarkCache.clear()
+  } else {
+    benchmarkCache.delete(niche)
+  }
+}
 
 // Benchmarks por defecto — el usuario los edita desde la pantalla de Ajustes por nicho.
 export const DEFAULT_BENCHMARKS: Record<string, NicheBenchmark> = {
@@ -51,17 +70,29 @@ export const GENERIC_BENCHMARK: NicheBenchmark = {
 }
 
 export function getBenchmark(niche: string): NicheBenchmark {
-  // Lee overrides del usuario desde localStorage primero
+  // 1. Cache hit → devuelve sin tocar localStorage
+  if (benchmarkCache.has(niche)) {
+    return benchmarkCache.get(niche)!
+  }
+
+  // 2. Cache miss → leer localStorage, parsear, cachear y devolver
+  let benchmark: NicheBenchmark
   try {
     const raw = localStorage.getItem(BENCHMARK_STORAGE_KEY)
     if (raw) {
       const stored: Record<string, NicheBenchmark> = JSON.parse(raw)
-      if (stored[niche]) return stored[niche]
+      if (stored[niche]) {
+        benchmark = stored[niche]
+        benchmarkCache.set(niche, benchmark)
+        return benchmark
+      }
     }
   } catch {
     // falla silenciosa, usar default
   }
-  return DEFAULT_BENCHMARKS[niche] ?? { ...GENERIC_BENCHMARK, niche }
+  benchmark = DEFAULT_BENCHMARKS[niche] ?? { ...GENERIC_BENCHMARK, niche }
+  benchmarkCache.set(niche, benchmark)
+  return benchmark
 }
 
 function clamp(n: number, min = 0, max = 100) {

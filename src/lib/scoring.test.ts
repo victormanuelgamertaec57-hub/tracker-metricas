@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import type { Creative } from '../types'
 import {
   computeDerivedMetrics,
@@ -8,6 +8,7 @@ import {
   detectTrendingUp,
   scoreCreative,
   getBenchmark,
+  invalidateBenchmarkCache,
   DEFAULT_BENCHMARKS,
 } from './scoring'
 
@@ -284,6 +285,12 @@ describe('detectTrendingUp', () => {
 })
 
 describe('getBenchmark', () => {
+  // El cache es a nivel de módulo; entre tests hay que limpiarlo para que
+  // un valor cacheado en un test anterior no contamine al siguiente.
+  beforeEach(() => {
+    invalidateBenchmarkCache()
+  })
+
   it('devuelve el benchmark hardcodeado cuando no hay override en localStorage', () => {
     localStorage.removeItem('tracker-metricas:benchmarks')
     const b = getBenchmark('Berrinches')

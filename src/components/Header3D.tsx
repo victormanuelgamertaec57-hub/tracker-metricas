@@ -1,31 +1,32 @@
 import { useRef, useMemo, useState, useEffect } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { Line } from '@react-three/drei'
 import * as THREE from 'three'
 
 // Wireframe signal/signal-tower abstract object - Electric blue
 function SignalMesh({ paused }: { paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
-  
-  // Create the signal tower lines (abstract geometric shape)
+
+  // Pre-compute THREE.Line instances (geometry + material + mesh) once.
+  // We use native three.js <primitive> instead of @react-three/drei's <Line>,
+  // which historically dragged a lot of bundle weight for what is a thin wrapper.
   const lines = useMemo(() => {
     const lineData: THREE.Vector3[][] = []
     const segments = 24
     const height = 1.2
     const baseRadius = 0.4
-    
+
     // Main vertical tower
     lineData.push([
       new THREE.Vector3(0, -height/2, 0),
       new THREE.Vector3(0, height/2, 0)
     ])
-    
+
     // Signal rings (ellipses at different heights)
     for (let i = 0; i < 3; i++) {
       const y = -height/4 + (i * height/3)
       const radius = baseRadius * (1 - i * 0.2)
       const ellipsePoints: THREE.Vector3[] = []
-      
+
       for (let j = 0; j <= segments; j++) {
         const angle = (j / segments) * Math.PI * 2
         ellipsePoints.push(new THREE.Vector3(
@@ -36,7 +37,7 @@ function SignalMesh({ paused }: { paused: boolean }) {
       }
       lineData.push(ellipsePoints)
     }
-    
+
     // Diagonal support lines
     for (let i = 0; i < 4; i++) {
       const angle = (i / 4) * Math.PI * 2 + Math.PI/4
@@ -49,7 +50,7 @@ function SignalMesh({ paused }: { paused: boolean }) {
         )
       ])
     }
-    
+
     // Base cross
     lineData.push([
       new THREE.Vector3(-baseRadius * 0.6, -height/2, 0),
@@ -59,10 +60,28 @@ function SignalMesh({ paused }: { paused: boolean }) {
       new THREE.Vector3(0, -height/2, -baseRadius * 0.6),
       new THREE.Vector3(0, -height/2, baseRadius * 0.6)
     ])
-    
-    return lineData
+
+    return lineData.map((points, i) => {
+      const geometry = new THREE.BufferGeometry().setFromPoints(points)
+      const material = new THREE.LineBasicMaterial({
+        color: '#38BDF8',
+        transparent: true,
+        opacity: 0.5 - i * 0.015,
+      })
+      return new THREE.Line(geometry, material)
+    })
   }, [])
-  
+
+  // Dispose GPU resources on unmount to avoid leaks.
+  useEffect(() => {
+    return () => {
+      lines.forEach((line) => {
+        line.geometry.dispose()
+        line.material.dispose()
+      })
+    }
+  }, [lines])
+
   useFrame((state) => {
     if (paused || !groupRef.current) return
     const t = state.clock.getElapsedTime()
@@ -71,18 +90,11 @@ function SignalMesh({ paused }: { paused: boolean }) {
     // Subtle floating
     groupRef.current.position.y = Math.sin(t * 0.3) * 0.05
   })
-  
+
   return (
     <group ref={groupRef}>
-      {lines.map((points, i) => (
-        <Line
-          key={i}
-          points={points}
-          color="#38BDF8"
-          lineWidth={1}
-          transparent
-          opacity={0.5 - i * 0.015}
-        />
+      {lines.map((line, i) => (
+        <primitive key={i} object={line} />
       ))}
     </group>
   )
@@ -121,8 +133,8 @@ function ParticleNodes({ paused }: { paused: boolean }) {
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     return geo
   }, [positions])
-  
-  const material = useMemo(() => 
+
+  const material = useMemo(() =>
     new THREE.PointsMaterial({
       color: '#38BDF8',
       size: 0.025,
@@ -131,7 +143,15 @@ function ParticleNodes({ paused }: { paused: boolean }) {
       sizeAttenuation: true,
     }),
   [])
-  
+
+  // Dispose GPU resources on unmount to avoid leaks (same pattern as SignalMesh lines).
+  useEffect(() => {
+    return () => {
+      geometry.dispose()
+      material.dispose()
+    }
+  }, [geometry, material])
+
   return <points ref={pointsRef} geometry={geometry} material={material} />
 }
 

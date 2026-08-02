@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react'
 import type { NicheBenchmark } from '../types'
-import { DEFAULT_BENCHMARKS } from '../lib/scoring'
-
-const STORAGE_KEY = 'tracker-metricas:benchmarks'
+import {
+  DEFAULT_BENCHMARKS,
+  BENCHMARK_STORAGE_KEY,
+  invalidateBenchmarkCache,
+} from '../lib/scoring'
 
 function loadBenchmarks(): Record<string, NicheBenchmark> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(BENCHMARK_STORAGE_KEY)
     if (raw) return JSON.parse(raw)
   } catch {
     // ignore
@@ -15,7 +17,7 @@ function loadBenchmarks(): Record<string, NicheBenchmark> {
 }
 
 function saveBenchmarks(benchmarks: Record<string, NicheBenchmark>) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(benchmarks))
+  localStorage.setItem(BENCHMARK_STORAGE_KEY, JSON.stringify(benchmarks))
 }
 
 const ALL_NICHES = Object.keys(DEFAULT_BENCHMARKS)
@@ -26,6 +28,9 @@ export function NicheSettings({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     saveBenchmarks(benchmarks)
+    // Tras guardar en localStorage, invalidamos el cache de scoring.ts
+    // para que el próximo scoreCreative() lea los valores nuevos.
+    invalidateBenchmarkCache()
     setSaved(true)
     const t = setTimeout(() => setSaved(false), 1500)
     return () => clearTimeout(t)
@@ -40,7 +45,32 @@ export function NicheSettings({ onClose }: { onClose: () => void }) {
 
   function updateWeight(niche: string, sub: 'engagement' | 'result' | 'efficiency', value: number) {
     const b = benchmarks[niche]
-    const newWeights = { ...b.weights, [sub]: value }
+    const others = (Object.keys(b.weights) as Array<keyof typeof b.weights>).filter((k) => k !== sub)
+    const otherSum = others.reduce((acc, k) => acc + b.weights[k], 0)
+    const remaining = 1 - value
+
+    let newWeights = { ...b.weights, [sub]: value }
+
+    if (otherSum <= 0) {
+      // Si los otros dos son 0, no podemos escalar proporcionalmente — distribuimos en partes iguales.
+      const equalShare = remaining / others.length
+      others.forEach((k) => {
+        newWeights[k] = equalShare
+      })
+    } else {
+      // Escalamos los otros dos proporcionalmente para que sumen (1 - value).
+      const scale = remaining / otherSum
+      others.forEach((k) => {
+        newWeights[k] = b.weights[k] * scale
+      })
+    }
+
+    // Snap final: corrige errores de punto flotante para que la suma sea exactamente 1.0.
+    const actualSum = newWeights.engagement + newWeights.result + newWeights.efficiency
+    const drift = 1 - actualSum
+    // Aplicamos el drift al peso editado (es el que el usuario acaba de mover).
+    newWeights = { ...newWeights, [sub]: newWeights[sub] + drift }
+
     setBenchmarks((prev) => ({
       ...prev,
       [niche]: { ...prev[niche], weights: newWeights },
@@ -178,6 +208,7 @@ export function NicheSettings({ onClose }: { onClose: () => void }) {
           <button
             onClick={() => {
               setBenchmarks({ ...DEFAULT_BENCHMARKS })
+              invalidateBenchmarkCache()
             }}
             className="bg-transparent border text-[12px] rounded-lg px-4 py-2 cursor-pointer hover:opacity-70 transition-all"
             style={{ 
