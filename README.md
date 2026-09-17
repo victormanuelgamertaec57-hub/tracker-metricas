@@ -89,6 +89,10 @@ META_ACCESS_TOKEN=EAAxxxxxxxxxxxxx...
 # Pon el mismo valor en ambas variables:
 APP_SECRET=<tu-secreto>
 VITE_APP_SECRET=<tu-secreto>
+
+# Análisis de creativos con IA (solo backend):
+GEMINI_API_KEY=<tu-gemini-api-key>
+ANTHROPIC_API_KEY=<tu-anthropic-api-key>
 ```
 
 `netlify-cli` ya está en `devDependencies`, no hace falta instalar nada extra.
@@ -99,7 +103,9 @@ VITE_APP_SECRET=<tu-secreto>
 2. Agrega `META_ACCESS_TOKEN` = tu token
 3. Agrega `APP_SECRET` = el mismo secreto que usas en local
 4. Agrega `VITE_APP_SECRET` = el mismo valor que `APP_SECRET`
-5. Redeploy
+5. Agrega `GEMINI_API_KEY` = tu API key de Google AI Studio
+6. Agrega `ANTHROPIC_API_KEY` = tu API key de Anthropic
+7. Redeploy
 
 ### 3. Desarrollo local: usa `netlify dev`, no `npm run dev`
 
@@ -134,6 +140,20 @@ Esto levanta Vite + las Netlify Functions en `http://localhost:8888`.
 | `/.netlify/functions/meta-hierarchy?level=adsets&parentId={campaign_id}` | `GET` | Lista conjuntos de anuncios |
 | `/.netlify/functions/meta-hierarchy?level=ads&parentId={adset_id}` | `GET` | Lista anuncios del conjunto |
 | `/.netlify/functions/meta-insights` | `POST` | Devuelve métricas normalizadas de un anuncio |
+| `/.netlify/functions/analyze-creative-background` | `POST` | Inicia análisis de IA (background, retorna 202) |
+| `/.netlify/functions/get-creative-analysis?key={videoKey}` | `GET` | Lee resultado del análisis de IA |
+
+## Análisis de creativos con IA
+
+Pipeline de análisis en 3 etapas, ejecutado como Background Function (hasta 15 min):
+
+1. **Gemini (`gemini-3.8-flash`)** — percepción del video: transcript hablado, texto en pantalla, hook literal, escenas, formato detectado, notas de ritmo.
+2. **Meta Graph API** — copy del anuncio: texto principal, titular, descripción del enlace, variaciones de Advantage+ Creative.
+3. **Claude (`claude-sonnet-5`)** — análisis estratégico: score visual (0-100), análisis del hook, análisis del copy, riesgo de cumplimiento con frases citadas, razones de éxito/fallo, recomendaciones accionables.
+
+El score combinado es 50% reglas de scoring (métricas vs benchmarks) + 50% score visual de Claude.
+
+Los resultados se guardan en el store de Netlify Blobs `creative-ai-analysis` con tres estados posibles: `processing`, `done`, `error`.
 
 ## Guardado de datos
 

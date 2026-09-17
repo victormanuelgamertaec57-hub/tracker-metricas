@@ -9,6 +9,9 @@
   port = 8888
   targetPort = 5173
 
+[functions.analyze-creative-background]
+  background = true
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
