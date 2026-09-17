@@ -57,6 +57,18 @@ export const DEFAULT_BENCHMARKS: Record<string, NicheBenchmark> = {
     cpaTarget: 6.5,
     weights: { engagement: 0.4, result: 0.4, efficiency: 0.2 },
   },
+  // Tai Chi: nicho de bienestar para audiencia mayor. Engagement más bajo que
+  // Método Hormonal por el ritmo pausado del contenido, pero conversión
+  // comparable. Valores iniciales — ajustar con datos reales de campañas.
+  'Tai Chi': {
+    niche: 'Tai Chi',
+    ctrTarget: 1.5,        // audiencia mayor, scrollea más lento → CTR menor
+    hookRateTarget: 22,    // hooks menos agresivos, ritmo más calmado
+    holdRateTarget: 16,    // retención decente gracias a contenido relajante
+    roasTarget: 2.0,       // ticket similar a bienestar
+    cpaTarget: 8,          // CPA algo más alto por menor volumen de búsqueda
+    weights: { engagement: 0.3, result: 0.45, efficiency: 0.25 },
+  },
 }
 
 export const GENERIC_BENCHMARK: NicheBenchmark = {

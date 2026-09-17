@@ -1,5 +1,6 @@
 import type { Handler, HandlerEvent } from '@netlify/functions'
 import { getStore } from '@netlify/blobs'
+import { isAuthorized } from './_auth'
 
 const CHUNK_STORE_NAME = 'video-chunks'
 const FINAL_STORE_NAME = 'creative-videos'
@@ -24,6 +25,13 @@ const handler: Handler = async (event: HandlerEvent) => {
     return {
       statusCode: 405,
       body: JSON.stringify({ error: 'Method not allowed' }),
+    }
+  }
+
+  if (!isAuthorized(event)) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({ error: 'Unauthorized' }),
     }
   }
 
@@ -66,6 +74,14 @@ const handler: Handler = async (event: HandlerEvent) => {
       return {
         statusCode: 400,
         body: JSON.stringify({ error: 'Invalid chunkNumber: must be between 0 and totalChunks-1' }),
+      }
+    }
+
+    // Validar que el contentType sea un video
+    if (contentType && !contentType.startsWith('video/')) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'Invalid contentType: must start with video/' }),
       }
     }
 

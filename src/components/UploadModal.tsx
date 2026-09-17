@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import type { Creative, Format, RawMetrics } from '../types'
-import { fetchMetaLevel, syncCreativeWithMeta, type MetaEntity, type MetaLevel } from '../lib/meta'
+import { fetchMetaLevel, syncCreativeWithMeta, APP_SECRET, authenticateVideoUrl, type MetaEntity, type MetaLevel } from '../lib/meta'
 
-const NICHES = ['Berrinches', 'Método Hormonal', 'CalistenIA']
+const NICHES = ['Berrinches', 'Método Hormonal', 'CalistenIA', 'Tai Chi']
 const FORMATS: Format[] = ['9:16', '1:1', '4:5', '16:9']
 const MAX_VIDEO_SIZE_MB = 100
 const CHUNK_SIZE_MB = 4 // 4MB por chunk para caber en el límite de 6MB de Netlify
@@ -16,6 +16,7 @@ function detectNicheFromName(campaignName: string): string | null {
   if (lower.includes('berrinch')) return 'Berrinches'
   if (lower.includes('hormonal')) return 'Método Hormonal'
   if (lower.includes('calisten')) return 'CalistenIA'
+  if (lower.includes('tai chi') || lower.includes('taichi')) return 'Tai Chi'
   return null
 }
 
@@ -105,7 +106,10 @@ async function uploadChunk(
     try {
       const response = await fetch('/.netlify/functions/upload-video-chunk', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(APP_SECRET ? { 'x-app-secret': APP_SECRET } : {}),
+        },
         body: JSON.stringify({
           uploadId,
           chunkNumber,
@@ -446,7 +450,7 @@ export function UploadModal({
         setUploadChunkInfo({ current: currentChunk, total: totalChunks })
       })
       
-      setVideoUrl(url)
+      setVideoUrl(authenticateVideoUrl(url))
       setUploadProgress(100)
       setUploadChunkInfo(null)
     } catch (err) {

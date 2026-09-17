@@ -1,4 +1,5 @@
 import type { Handler, HandlerEvent } from '@netlify/functions'
+import { isAuthorized } from './_auth'
 
 interface MetaEntityRaw {
   id: string
@@ -18,6 +19,14 @@ const handler: Handler = async (event: HandlerEvent) => {
       statusCode: 405,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ error: 'Method not allowed' }),
+    }
+  }
+
+  if (!isAuthorized(event)) {
+    return {
+      statusCode: 401,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Unauthorized' }),
     }
   }
 

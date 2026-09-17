@@ -83,6 +83,12 @@ Crea un archivo `.env` en la raíz (ya está en `.gitignore`):
 cp .env.example .env
 # Edita .env y completa:
 META_ACCESS_TOKEN=EAAxxxxxxxxxxxxx...
+
+# Genera un secreto random para proteger las Netlify Functions:
+#   openssl rand -hex 32
+# Pon el mismo valor en ambas variables:
+APP_SECRET=<tu-secreto>
+VITE_APP_SECRET=<tu-secreto>
 ```
 
 `netlify-cli` ya está en `devDependencies`, no hace falta instalar nada extra.
@@ -91,7 +97,9 @@ META_ACCESS_TOKEN=EAAxxxxxxxxxxxxx...
 
 1. Entra a **Netlify → tu sitio → Site settings → Environment variables**
 2. Agrega `META_ACCESS_TOKEN` = tu token
-3. Redeploy
+3. Agrega `APP_SECRET` = el mismo secreto que usas en local
+4. Agrega `VITE_APP_SECRET` = el mismo valor que `APP_SECRET`
+5. Redeploy
 
 ### 3. Desarrollo local: usa `netlify dev`, no `npm run dev`
 

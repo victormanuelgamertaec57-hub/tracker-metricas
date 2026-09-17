@@ -31,3 +31,6 @@ dist-ssr
 # Netlify
 .netlify
 netlify/functions/*.js
+
+# Memoria local de herramientas de IA
+.omc/

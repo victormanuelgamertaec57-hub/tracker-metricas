@@ -5,7 +5,7 @@ import { getBenchmark } from '../lib/scoring'
 import { classifyHealth } from '../lib/health'
 import { MetricStat } from './MetricStat'
 import { CATEGORY_LABEL, CATEGORY_STYLE } from '../lib/category'
-import { syncCreativeWithMeta } from '../lib/meta'
+import { syncCreativeWithMeta, authenticateVideoUrl } from '../lib/meta'
 
 const FORMAT_LABEL: Record<Creative['format'], string> = {
   '9:16': 'Reel 9:16',
@@ -211,7 +211,7 @@ export function CreativeDetail({
                 poster={creative.thumbnailUrl || undefined}
                 controls
                 preload="metadata"
-                src={creative.videoUrl || undefined}
+                src={authenticateVideoUrl(creative.videoUrl || '') || undefined}
               >
                 Tu navegador no soporta la reproducción de video.
               </video>

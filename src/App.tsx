@@ -5,6 +5,7 @@ import { Dashboard } from './components/Dashboard'
 import { CreativeDetail } from './components/CreativeDetail'
 import { UploadModal } from './components/UploadModal'
 import { NicheSettings } from './components/NicheSettings'
+import { APP_SECRET } from './lib/meta'
 
 const STORAGE_KEY = 'tracker-metricas:creatives'
 
@@ -44,7 +45,10 @@ export default function App() {
         if (key) {
           await fetch('/.netlify/functions/delete-video', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(APP_SECRET ? { 'x-app-secret': APP_SECRET } : {}),
+            },
             body: JSON.stringify({ key }),
           })
           console.log(`Video eliminado: ${key}`)

@@ -1,4 +1,5 @@
 import type { Handler, HandlerEvent } from '@netlify/functions'
+import { isAuthorized } from './_auth'
 
 interface MetaAction {
   action_type: string
@@ -259,6 +260,13 @@ const handler: Handler = async (event: HandlerEvent) => {
     return {
       statusCode: 405,
       body: JSON.stringify({ error: 'Method not allowed' }),
+    }
+  }
+
+  if (!isAuthorized(event)) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({ error: 'Unauthorized' }),
     }
   }
 

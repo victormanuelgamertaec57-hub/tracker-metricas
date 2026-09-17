@@ -3,6 +3,9 @@ import type { RawMetrics } from '../types'
 // El access token de Meta Ads NUNCA debe estar en el cliente.
 // Se lee desde META_ACCESS_TOKEN en las env vars de Netlify.
 
+// Secreto compartido para autenticar las llamadas a Netlify Functions.
+export const APP_SECRET = import.meta.env.VITE_APP_SECRET as string | undefined
+
 const META_TOKEN_KEY = 'tracker-metricas:meta-token' // legacy, para migrar
 
 export interface MetaEntity {
@@ -46,7 +49,13 @@ export type MetaLevel = 'accounts' | 'campaigns' | 'adsets' | 'ads'
 async function callMetaFunction<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
-    response = await fetch(url, init)
+    const headers: Record<string, string> = {
+      ...(init?.headers as Record<string, string>),
+    }
+    if (APP_SECRET) {
+      headers['x-app-secret'] = APP_SECRET
+    }
+    response = await fetch(url, { ...init, headers })
   } catch (err) {
     throw new Error(
       `No se pudo conectar con el servidor (${err instanceof Error ? err.message : 'error de red'}). Verifica tu conexión.`
@@ -119,4 +128,15 @@ export async function syncCreativeWithMeta(adId: string): Promise<MetaSyncResult
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ adId }),
   })
+}
+
+/**
+ * Añade el token de autenticación a una URL de get-video.
+ * El navegador no puede enviar headers custom en `<video src=...>`,
+ * así que el token va como query param.
+ */
+export function authenticateVideoUrl(url: string): string {
+  if (!APP_SECRET || !url) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}token=${encodeURIComponent(APP_SECRET)}`
 }

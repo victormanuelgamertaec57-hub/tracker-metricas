@@ -1,5 +1,6 @@
 import type { Handler, HandlerEvent } from '@netlify/functions'
 import { getStore } from '@netlify/blobs'
+import { isAuthorized } from './_auth'
 
 const STORE_NAME = 'creative-videos'
 
@@ -8,6 +9,13 @@ const handler: Handler = async (event: HandlerEvent) => {
     return {
       statusCode: 405,
       body: JSON.stringify({ error: 'Method not allowed' }),
+    }
+  }
+
+  if (!isAuthorized(event)) {
+    return {
+      statusCode: 401,
+      body: JSON.stringify({ error: 'Unauthorized' }),
     }
   }
 
