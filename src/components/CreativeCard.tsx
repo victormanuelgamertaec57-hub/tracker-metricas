@@ -127,8 +127,8 @@ export function CreativeCard({
   }
 
   function handleMediaClick(e: React.MouseEvent) {
-    e.stopPropagation()
     if (!hasVideo || !videoRef.current) return
+    e.stopPropagation()
 
     if (isPlaying) {
       videoRef.current.pause()
