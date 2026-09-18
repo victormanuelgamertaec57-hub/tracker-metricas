@@ -677,13 +677,34 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     console.warn('[analyze] Error verificando estado previo del análisis:', checkErr)
   }
 
-  // Background function: guardamos estado inicial 'processing' para polling del frontend
+  // Background function: guardamos estado inicial 'processing' para polling del frontend.
+  // Usamos onlyIfNew: true para cerrar la condición de carrera: si dos peticiones
+  // concurrentes intentan analizar el mismo video a la vez, solo la primera modificará
+  // el store y la segunda recibirá modified: false, retornando 409.
   const initialState: CreativeAIAnalysis = {
     status: 'processing',
     creativeId,
     timestamp: new Date().toISOString(),
   }
-  await analysisStore.set(videoKey, JSON.stringify(initialState))
+
+  if (!forceReanalyze) {
+    const writeResult = await analysisStore.set(videoKey, JSON.stringify(initialState), {
+      onlyIfNew: true,
+    })
+
+    if (!writeResult.modified) {
+      return {
+        statusCode: 409,
+        body: JSON.stringify({
+          error: 'Ya hay un análisis en curso o completado para este video',
+          status: 'processing',
+          creativeId,
+        }),
+      }
+    }
+  } else {
+    await analysisStore.set(videoKey, JSON.stringify(initialState))
+  }
 
   console.log(`[analyze] Starting analysis for creative ${creativeId}, videoKey=${videoKey}`)
 
