@@ -1,8 +1,9 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import type { Creative } from '../types'
 import { scoreCreative } from '../lib/scoring'
 import { CATEGORY_STYLE, CATEGORY_WORD } from '../lib/category'
+import { authenticateVideoUrl } from '../lib/meta'
 
 const ASPECT: Record<Creative['format'], string> = {
   '9:16': '9/16',
@@ -114,12 +115,31 @@ export function CreativeCard({
   const score = scoreCreative(creative)
   const style = CATEGORY_STYLE[score.category]
   const hasVideo = !!creative.videoUrl
+  const [isPlaying, setIsPlaying] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const { ref, handleMouseMove, handleMouseEnter, handleMouseLeave } = useTilt()
   
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation()
     if (onDelete && confirm(`¿Eliminar "${creative.name}"? Esta acción no se puede deshacer.`)) {
       onDelete(creative.id)
+    }
+  }
+
+  function handleMediaClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!hasVideo || !videoRef.current) return
+
+    if (isPlaying) {
+      videoRef.current.pause()
+      videoRef.current.currentTime = 0
+      setIsPlaying(false)
+    } else {
+      videoRef.current.play().then(() => {
+        setIsPlaying(true)
+      }).catch((err) => {
+        console.error('Error al reproducir video:', err)
+      })
     }
   }
   
@@ -145,15 +165,27 @@ export function CreativeCard({
         onMouseLeave={handleMouseLeave}
         onClick={() => onOpen(creative.id)}
       >
-        {/* Thumbnail area */}
+        {/* Thumbnail / Video area */}
         <div
-          className="flex items-center justify-center relative"
+          className="flex items-center justify-center relative overflow-hidden"
           style={{ 
             aspectRatio: ASPECT[creative.format],
             background: creative.thumbnailUrl ? 'transparent' : 'var(--bg-thumb)',
           }}
+          onClick={handleMediaClick}
         >
-          {creative.thumbnailUrl ? (
+          {hasVideo ? (
+            <video
+              ref={videoRef}
+              src={authenticateVideoUrl(creative.videoUrl || '') || undefined}
+              poster={creative.thumbnailUrl || undefined}
+              preload="metadata"
+              muted
+              loop
+              playsInline
+              className="w-full h-full object-cover"
+            />
+          ) : creative.thumbnailUrl ? (
             <img 
               src={creative.thumbnailUrl} 
               alt={creative.name}
@@ -163,10 +195,10 @@ export function CreativeCard({
             <i className="ti ti-player-play text-[22px]" style={{ color: 'var(--text-muted)' }} />
           )}
           
-          {/* Play icon overlay if video exists */}
-          {hasVideo && (
+          {/* Play icon overlay if video exists and is not playing */}
+          {hasVideo && !isPlaying && (
             <div 
-              className="absolute inset-0 flex items-center justify-center"
+              className="absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-200"
               style={{ background: 'rgba(0,0,0,0.3)' }}
             >
               <div 
@@ -183,7 +215,7 @@ export function CreativeCard({
           
           {/* Format badge */}
           <span 
-            className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded"
+            className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none"
             style={{ 
               background: 'rgba(0,0,0,0.6)',
               color: 'var(--text-muted)',
@@ -194,7 +226,7 @@ export function CreativeCard({
           
           {/* Score badge - top right corner with glow */}
           <span 
-            className="absolute top-2 right-2 text-[11px] px-1.5 py-0.5 rounded font-medium tabular-nums flex items-center gap-1"
+            className="absolute top-2 right-2 text-[11px] px-1.5 py-0.5 rounded font-medium tabular-nums flex items-center gap-1 pointer-events-none"
             style={{ 
               background: style.bg,
               color: style.text,
@@ -208,7 +240,7 @@ export function CreativeCard({
           {onDelete && (
             <button
               onClick={handleDelete}
-              className="absolute top-2 right-2 w-6 h-6 rounded flex items-center justify-center transition-all"
+              className="absolute top-2 right-2 w-6 h-6 rounded flex items-center justify-center transition-all z-10"
               style={{
                 background: 'rgba(0,0,0,0.6)',
                 color: 'var(--text-muted)',
@@ -231,7 +263,7 @@ export function CreativeCard({
           {/* Fatigue indicator */}
           {score.isFatigued && (
             <span 
-              className="absolute bottom-2 right-2 text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1"
+              className="absolute bottom-2 right-2 text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 pointer-events-none"
               style={{ 
                 background: 'rgba(239,68,68,0.2)',
                 color: 'var(--cat-apagar)',
@@ -245,7 +277,7 @@ export function CreativeCard({
           {/* Trending indicator */}
           {score.trendingUp && !score.isFatigued && (
             <span 
-              className="absolute bottom-2 right-2 text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1"
+              className="absolute bottom-2 right-2 text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 pointer-events-none"
               style={{ 
                 background: 'rgba(34,197,94,0.2)',
                 color: 'var(--cat-ganador)',

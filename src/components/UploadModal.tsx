@@ -254,6 +254,7 @@ export function UploadModal({
   const [uploadChunkInfo, setUploadChunkInfo] = useState<{ current: number; total: number } | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
 
   // 1. Carga las cuentas al abrir el modal
   useEffect(() => {
@@ -412,11 +413,8 @@ export function UploadModal({
     }
   }
 
-  // Manejar selección de archivo de video
-  async function handleVideoSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    
+  // Procesar archivo de video (compartido entre click y drag-and-drop)
+  async function processVideoFile(file: File) {
     // Validar tipo
     if (!file.type.startsWith('video/')) {
       setUploadError('Selecciona un archivo de video válido')
@@ -460,6 +458,39 @@ export function UploadModal({
     } finally {
       setIsUploading(false)
     }
+  }
+
+  // Manejar selección de archivo de video por click
+  function handleVideoSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    processVideoFile(file)
+    // Permite volver a seleccionar el mismo archivo si fue eliminado
+    e.target.value = ''
+  }
+
+  // Handlers para drag-and-drop
+  function handleDragOver(e: React.DragEvent<HTMLElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isDragging) {
+      setIsDragging(true)
+    }
+  }
+
+  function handleDragLeave(e: React.DragEvent<HTMLElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (!file) return
+    processVideoFile(file)
   }
   
   function removeVideo() {
@@ -673,24 +704,41 @@ export function UploadModal({
                 )}
               </div>
             ) : (
-              <label 
-                className="flex flex-col items-center justify-center gap-2 rounded-lg cursor-pointer py-6 transition-colors"
-                style={{ 
-                  background: 'var(--bg-base)',
-                  border: '1px dashed var(--divider-strong)',
-                }}
-              >
-                <i className="ti ti-upload text-[24px]" style={{ color: 'var(--text-muted)' }} />
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  Subir video (máx. {MAX_VIDEO_SIZE_MB}MB, se sube en partes)
-                </span>
-                <input 
-                  type="file" 
-                  accept="video/*" 
-                  className="hidden"
-                  onChange={handleVideoSelect}
-                />
-              </label>
+              <div>
+                <label 
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className="flex flex-col items-center justify-center gap-2 rounded-lg cursor-pointer py-6 transition-all duration-200"
+                  style={{ 
+                    background: isDragging ? 'rgba(56, 189, 248, 0.08)' : 'var(--bg-base)',
+                    border: isDragging ? '1px dashed var(--accent)' : '1px dashed var(--divider-strong)',
+                    boxShadow: isDragging ? '0 0 16px var(--accent-glow)' : 'none',
+                  }}
+                >
+                  <i 
+                    className="ti ti-upload text-[24px] transition-colors duration-200" 
+                    style={{ color: isDragging ? 'var(--accent)' : 'var(--text-muted)' }} 
+                  />
+                  <span 
+                    className="text-[11px] transition-colors duration-200" 
+                    style={{ color: isDragging ? 'var(--accent)' : 'var(--text-muted)' }}
+                  >
+                    {isDragging ? 'Suelta el video aquí' : `Subir video (máx. ${MAX_VIDEO_SIZE_MB}MB, se sube en partes)`}
+                  </span>
+                  <input 
+                    type="file" 
+                    accept="video/*" 
+                    className="hidden"
+                    onChange={handleVideoSelect}
+                  />
+                </label>
+                {uploadError && (
+                  <p className="text-[10px] p-2 mt-1" style={{ color: 'var(--cat-apagar)' }}>
+                    {uploadError}
+                  </p>
+                )}
+              </div>
             )}
           </Field>
 
