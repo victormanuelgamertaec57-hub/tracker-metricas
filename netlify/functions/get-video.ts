@@ -41,18 +41,22 @@ const handler: Handler = async (event: HandlerEvent) => {
 
   try {
     const store = getStore(STORE_NAME)
-    const result = await store.get(sanitizedKey, { type: 'buffer' })
+    const arrayBuf = await store.get(sanitizedKey, { type: 'arrayBuffer' })
 
-    if (!result) {
+    if (!arrayBuf) {
       return {
         statusCode: 404,
         body: JSON.stringify({ error: 'Video not found' }),
       }
     }
 
+    // @netlify/blobs devuelve ArrayBuffer; lo convertimos a Buffer para
+    // poder inspeccionar magic bytes y codificar en base64.
+    const result = Buffer.from(arrayBuf)
+
     // Detectar content-type desde los primeros bytes
     let contentType = 'video/mp4'
-    if (result instanceof Uint8Array && result.length >= 12) {
+    if (result.length >= 12) {
       // Check for common video formats by magic bytes
       if (result[4] === 0x66 && result[5] === 0x74 && result[6] === 0x79 && result[7] === 0x70) {
         // ftyp -> MP4
