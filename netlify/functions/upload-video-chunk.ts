@@ -1,5 +1,5 @@
 import type { Handler, HandlerEvent } from '@netlify/functions'
-import { getStore } from '@netlify/blobs'
+import { getStore, connectLambda } from '@netlify/blobs'
 import { isAuthorized } from './_auth'
 
 const CHUNK_STORE_NAME = 'video-chunks'
@@ -32,6 +32,18 @@ const handler: Handler = async (event: HandlerEvent) => {
     return {
       statusCode: 401,
       body: JSON.stringify({ error: 'Unauthorized' }),
+    }
+  }
+
+  // Netlify no configura el entorno de Blobs automáticamente en funciones V1
+  // (Lambda compatibility mode), así que hay que inicializarlo desde el event.
+  try {
+    connectLambda(event as any)
+  } catch (err) {
+    console.error('Error connecting Lambda environment for Blobs:', err)
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Failed to initialize storage connection' }),
     }
   }
 
