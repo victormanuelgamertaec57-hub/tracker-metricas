@@ -1,5 +1,5 @@
 import type { Handler, HandlerEvent, HandlerContext } from '@netlify/functions'
-import { getStore } from '@netlify/blobs'
+import { getStore, connectLambda } from '@netlify/blobs'
 import { isAuthorized } from './_auth'
 import {
   DEFAULT_BENCHMARKS,
@@ -540,15 +540,21 @@ REGLAS:
   }
 
   // Timeout 120s para llamada a Claude Messages API
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+  }
+
+  if (process.env.ANTHROPIC_WORKSPACE_ID) {
+    headers['anthropic-workspace-id'] = process.env.ANTHROPIC_WORKSPACE_ID
+  }
+
   const response = await fetchWithTimeout(
     'https://api.anthropic.com/v1/messages',
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
+      headers,
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: 4096,
@@ -604,6 +610,17 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     return {
       statusCode: 401,
       body: JSON.stringify({ error: 'Unauthorized' }),
+    }
+  }
+
+  try {
+    connectLambda(event as any)
+  } catch (err) {
+    console.error('Error connecting Lambda environment for Blobs:', err)
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Failed to initialize storage connection' }),
     }
   }
 

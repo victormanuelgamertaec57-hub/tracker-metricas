@@ -1,5 +1,5 @@
 import type { Handler, HandlerEvent } from '@netlify/functions'
-import { getStore } from '@netlify/blobs'
+import { getStore, connectLambda } from '@netlify/blobs'
 import { isAuthorized } from './_auth'
 
 const ANALYSIS_STORE = 'creative-ai-analysis'
@@ -18,6 +18,17 @@ const handler: Handler = async (event: HandlerEvent) => {
       statusCode: 401,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ error: 'Unauthorized' }),
+    }
+  }
+
+  try {
+    connectLambda(event as any)
+  } catch (err) {
+    console.error('Error connecting Lambda environment for Blobs:', err)
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Failed to initialize storage connection' }),
     }
   }
 

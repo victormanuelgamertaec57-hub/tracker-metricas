@@ -117,7 +117,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     for (let i = 0; i < totalChunks; i++) {
       const key = `chunks/${uploadId}/${i}`
       try {
-        const chunkData = await chunkStore.get(key)
+        const chunkData = await chunkStore.get(key, { type: 'arrayBuffer' })
         if (!chunkData) {
           throw new Error(`Chunk ${i} no encontrado`)
         }
