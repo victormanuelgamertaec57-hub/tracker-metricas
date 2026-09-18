@@ -9,7 +9,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck:functions": "tsc -p netlify/functions/tsconfig.json --noEmit"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.10",

@@ -1,7 +1,13 @@
 import type { Handler, HandlerEvent, HandlerContext } from '@netlify/functions'
-import type { Config } from '@netlify/functions'
 import { getStore } from '@netlify/blobs'
 import { isAuthorized } from './_auth'
+import {
+  DEFAULT_BENCHMARKS,
+  GENERIC_BENCHMARK,
+  computeDerivedMetrics,
+  computeSubScores,
+} from '../../src/lib/scoring'
+import type { Creative, NicheBenchmark } from '../../src/types'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,6 +55,7 @@ interface AnalysisRequest {
     retention75: number
     retention95: number
   }
+  forceReanalyze?: boolean
 }
 
 interface GeminiPerception {
@@ -98,95 +105,32 @@ interface CreativeAIAnalysis {
 }
 
 // ---------------------------------------------------------------------------
-// Benchmarks (réplica de los defaults de src/lib/scoring.ts)
+// Fetch helper con AbortController y Timeout explícito
 // ---------------------------------------------------------------------------
 
-interface NicheBenchmark {
-  ctrTarget: number
-  hookRateTarget: number
-  holdRateTarget: number
-  roasTarget: number
-  cpaTarget: number
-  weights: { engagement: number; result: number; efficiency: number }
-}
+/**
+ * Helper para realizar fetch con timeout explícito mediante AbortController.
+ * Evita que llamadas colgadas agoten el tiempo límite de la plataforma sin capturar el error.
+ */
+async function fetchWithTimeout(
+  url: string | URL,
+  options: RequestInit = {},
+  timeoutMs = 30000
+): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`Timeout tras ${timeoutMs}ms esperando respuesta de ${url.toString().split('?')[0]}`))
+  }, timeoutMs)
 
-const DEFAULT_BENCHMARKS: Record<string, NicheBenchmark> = {
-  Berrinches: {
-    ctrTarget: 2.2, hookRateTarget: 30, holdRateTarget: 20,
-    roasTarget: 2.5, cpaTarget: 6,
-    weights: { engagement: 0.4, result: 0.4, efficiency: 0.2 },
-  },
-  'Método Hormonal': {
-    ctrTarget: 1.8, hookRateTarget: 26, holdRateTarget: 18,
-    roasTarget: 2.2, cpaTarget: 7,
-    weights: { engagement: 0.35, result: 0.45, efficiency: 0.2 },
-  },
-  CalistenIA: {
-    ctrTarget: 2.0, hookRateTarget: 28, holdRateTarget: 19,
-    roasTarget: 2.3, cpaTarget: 6.5,
-    weights: { engagement: 0.4, result: 0.4, efficiency: 0.2 },
-  },
-  'Tai Chi': {
-    ctrTarget: 1.5, hookRateTarget: 22, holdRateTarget: 16,
-    roasTarget: 2.0, cpaTarget: 8,
-    weights: { engagement: 0.3, result: 0.45, efficiency: 0.25 },
-  },
-}
-
-const GENERIC_BENCHMARK: NicheBenchmark = {
-  ctrTarget: 2.0, hookRateTarget: 28, holdRateTarget: 19,
-  roasTarget: 2.3, cpaTarget: 6.5,
-  weights: { engagement: 0.4, result: 0.4, efficiency: 0.2 },
-}
-
-// ---------------------------------------------------------------------------
-// Scoring — lógica replicada de src/lib/scoring.ts (solo la fórmula pura)
-// ---------------------------------------------------------------------------
-
-function clamp(n: number, min = 0, max = 100) {
-  return Math.max(min, Math.min(max, n))
-}
-
-function ratioScore(value: number, target: number) {
-  if (target <= 0) return 0
-  return clamp((value / target) * 100)
-}
-
-function inverseRatioScore(target: number, value: number) {
-  if (value <= 0) return 100
-  return clamp((target / value) * 100)
-}
-
-function computeRulesComposite(metrics: AnalysisRequest['metrics'], niche: string): number {
-  const b = DEFAULT_BENCHMARKS[niche] ?? GENERIC_BENCHMARK
-
-  const ctr = metrics.impressions > 0 ? (metrics.linkClicks / metrics.impressions) * 100 : 0
-  const hookRate = metrics.videoPlays > 0 ? (metrics.hookViews / metrics.videoPlays) * 100 : 0
-  const holdRate = metrics.videoPlays > 0 ? (metrics.holdViews / metrics.videoPlays) * 100 : 0
-  const cpa = metrics.purchases > 0 ? metrics.spend / metrics.purchases : 0
-  const roas = metrics.spend > 0 ? metrics.revenue / metrics.spend : 0
-  const cpm = metrics.impressions > 0 ? (metrics.spend / metrics.impressions) * 1000 : 0
-
-  const engagement =
-    ratioScore(ctr, b.ctrTarget) * 0.4 +
-    ratioScore(hookRate, b.hookRateTarget) * 0.35 +
-    ratioScore(holdRate, b.holdRateTarget) * 0.25
-
-  const roasScore = ratioScore(roas, b.roasTarget)
-  const cpaScore = cpa > 0 ? inverseRatioScore(b.cpaTarget, cpa) : 50
-  const result = roasScore * 0.6 + cpaScore * 0.4
-
-  const freq = metrics.frequency
-  const freqScore = freq > 2 ? clamp(100 - (freq - 2) * 25) : 100
-  const cpmScore = clamp(100 - (cpm - 8) * 5)
-  const efficiency = freqScore * 0.6 + cpmScore * 0.4
-
-  const composite = Math.round(
-    Math.round(engagement) * b.weights.engagement +
-    Math.round(result) * b.weights.result +
-    Math.round(efficiency) * b.weights.efficiency
-  )
-  return composite
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+    return response
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -198,8 +142,8 @@ async function uploadToGeminiFilesAPI(
   mimeType: string,
   apiKey: string
 ): Promise<string> {
-  // Step 1: Initiate resumable upload
-  const initResponse = await fetch(
+  // Step 1: Initiate resumable upload (timeout 30s)
+  const initResponse = await fetchWithTimeout(
     `${GEMINI_API_BASE}/upload/v1beta/files?key=${apiKey}`,
     {
       method: 'POST',
@@ -213,7 +157,8 @@ async function uploadToGeminiFilesAPI(
       body: JSON.stringify({
         file: { displayName: 'creative-video-for-analysis' },
       }),
-    }
+    },
+    30_000
   )
 
   if (!initResponse.ok) {
@@ -226,16 +171,23 @@ async function uploadToGeminiFilesAPI(
     throw new Error('Gemini Files API did not return an upload URL')
   }
 
-  // Step 2: Upload the video data
-  const uploadResponse = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Length': String(videoBuffer.length),
-      'X-Goog-Upload-Offset': '0',
-      'X-Goog-Upload-Command': 'upload, finalize',
+  // Step 2: Upload the video data (timeout 120s)
+  // Buffer no está incluido en la interfaz BodyInit del DOM en lib.dom.d.ts, pero en
+  // runtime de Node.js 18+ (undici / fetch nativo) Buffer es completamente válido
+  // y soportado como cuerpo binario para streams y peticiones HTTP.
+  const uploadResponse = await fetchWithTimeout(
+    uploadUrl,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Length': String(videoBuffer.length),
+        'X-Goog-Upload-Offset': '0',
+        'X-Goog-Upload-Command': 'upload, finalize',
+      },
+      body: videoBuffer as unknown as BodyInit,
     },
-    body: videoBuffer,
-  })
+    120_000
+  )
 
   if (!uploadResponse.ok) {
     const text = await uploadResponse.text()
@@ -248,99 +200,160 @@ async function uploadToGeminiFilesAPI(
     throw new Error('Gemini Files API upload did not return a file name')
   }
 
-  // Step 3: Poll until state is ACTIVE
+  // Step 3: Poll until state is ACTIVE (timeout 15s por intento)
   const maxPolls = 60 // 5 minutes with 5s intervals
   for (let i = 0; i < maxPolls; i++) {
-    const statusResponse = await fetch(
-      `${GEMINI_API_BASE}/v1beta/${fileName}?key=${apiKey}`
+    const statusResponse = await fetchWithTimeout(
+      `${GEMINI_API_BASE}/v1beta/${fileName}?key=${apiKey}`,
+      {},
+      15_000
     )
     const statusData = await statusResponse.json()
 
     if (statusData.state === 'ACTIVE') {
       return statusData.uri
     }
+
     if (statusData.state === 'FAILED') {
-      throw new Error(`Gemini file processing failed: ${statusData.error?.message || 'unknown'}`)
+      throw new Error(`Gemini Files API processing failed: ${JSON.stringify(statusData.error)}`)
     }
 
     // Wait 5 seconds before next poll
-    await new Promise(resolve => setTimeout(resolve, 5000))
+    await new Promise((resolve) => setTimeout(resolve, 5000))
   }
 
-  throw new Error('Gemini file processing timed out (5 min)')
+  throw new Error('Gemini Files API timed out waiting for video to become ACTIVE')
+}
+
+function detectVideoMimeType(buffer: Buffer): string {
+  if (buffer.length < 12) return 'video/mp4'
+
+  // MP4: ftyp box
+  if (
+    buffer[4] === 0x66 &&
+    buffer[5] === 0x74 &&
+    buffer[6] === 0x79 &&
+    buffer[7] === 0x70
+  ) {
+    return 'video/mp4'
+  }
+
+  // WebM: EBML header
+  if (
+    buffer[0] === 0x1a &&
+    buffer[1] === 0x45 &&
+    buffer[2] === 0xdf &&
+    buffer[3] === 0xa3
+  ) {
+    return 'video/webm'
+  }
+
+  // QuickTime MOV: moov or free or ftyp
+  if (
+    (buffer[4] === 0x6d && buffer[5] === 0x6f && buffer[6] === 0x6f && buffer[7] === 0x76) ||
+    (buffer[4] === 0x66 && buffer[5] === 0x72 && buffer[6] === 0x65 && buffer[7] === 0x65)
+  ) {
+    return 'video/quicktime'
+  }
+
+  return 'video/mp4'
 }
 
 async function callGemini(
-  videoBuffer: Buffer,
-  mimeType: string,
+  videoPart: Record<string, any>,
   apiKey: string
 ): Promise<GeminiPerception> {
-  const isLarge = videoBuffer.length > GEMINI_INLINE_LIMIT
+  const systemInstruction = `Eres un transcriptor y descriptor visual extremadamente preciso para videos publicitarios de Meta Ads (Facebook/Instagram Reels, TikTok style).
 
-  // Build the video part
-  let videoPart: Record<string, unknown>
+Tu ÚNICA tarea es transcribir y describir objetivamente lo que ves y oyes en el video. NO emitas opiniones, NO juzgues si el anuncio es bueno o malo, NO des recomendaciones. Solo percibe y documenta con exactitud.
 
-  if (isLarge) {
-    console.log(`Video es ${(videoBuffer.length / 1024 / 1024).toFixed(1)}MB — usando Files API`)
-    const fileUri = await uploadToGeminiFilesAPI(videoBuffer, mimeType, apiKey)
-    videoPart = {
-      fileData: { fileUri, mimeType },
-    }
-  } else {
-    console.log(`Video es ${(videoBuffer.length / 1024 / 1024).toFixed(1)}MB — usando inline base64`)
-    videoPart = {
-      inlineData: {
-        data: videoBuffer.toString('base64'),
-        mimeType,
-      },
-    }
-  }
+El idioma del video es español. Presta especial atención al texto superpuesto en pantalla y a las primeras frases que se dicen (los primeros 3 segundos son críticos).`
 
-  const prompt = `Analiza este video publicitario de Meta Ads. Devuelve SOLO un objeto JSON válido (sin markdown, sin backticks) con esta estructura exacta:
+  const prompt = `Analiza este video publicitario y devuelve un JSON con la transcripción y descripción visual exacta.
 
+Devuelve un JSON con esta estructura exacta:
 {
-  "copyHablado": "transcript completo del audio, palabra por palabra, incluyendo todo lo que se dice",
+  "copyHablado": "<transcripción literal y completa de todo lo que se dice en el video>",
   "copyEnPantalla": [
-    { "texto": "texto exacto que aparece sobreimpreso", "segundoAproximado": 0 }
+    { "texto": "<texto que aparece>", "segundoAproximado": <segundo en que aparece> }
   ],
   "hookLiteral": {
-    "primeraFraseDicha": "transcripción EXACTA de lo primero que se dice en los primeros 3 segundos",
-    "primerTextoEnPantalla": "texto EXACTO sobreimpreso visible en los primeros 3 segundos"
+    "primeraFraseDicha": "<la primera frase que se escucha en los primeros 3 segundos>",
+    "primerTextoEnPantalla": "<el primer texto visible en pantalla en los primeros 3 segundos>"
   },
-  "escenas": "descripción detallada escena por escena: qué se ve, quién aparece, qué hace, fondos, transiciones",
-  "formatoDetectado": "testimonial | UGC | unboxing | talking-head | otro",
-  "notasDeRitmo": "observaciones sobre ritmo de edición, cortes, música, velocidad, pausas"
-}
+  "escenas": "<descripción breve de las escenas visuales principales>",
+  "formatoDetectado": "<testimonial | UGC | unboxing | talking-head | otro>",
+  "notasDeRitmo": "<ritmo del video: rápido, pausado, dinámico, monótono, etc.>"
+}`
 
-REGLAS:
-- copyHablado debe ser el transcript COMPLETO, no un resumen.
-- copyEnPantalla incluye TODO texto visible: subtítulos, títulos, CTAs, precios, sellos, logos con texto.
-- hookLiteral debe transcribir los primeros 3 segundos EXACTOS, no describir.
-- Si no hay audio hablado, copyHablado = "" y hookLiteral.primeraFraseDicha = "".
-- Si no hay texto en pantalla en los primeros 3s, hookLiteral.primerTextoEnPantalla = "".
-- formatoDetectado: elige la categoría más cercana.`
-
-  const requestBody = {
-    contents: [
-      {
-        parts: [
-          videoPart,
-          { text: prompt },
-        ],
+  const responseSchema = {
+    type: 'object' as const,
+    properties: {
+      copyHablado: { type: 'string' as const, description: 'Transcripción literal completa' },
+      copyEnPantalla: {
+        type: 'array' as const,
+        items: {
+          type: 'object' as const,
+          properties: {
+            texto: { type: 'string' as const },
+            segundoAproximado: { type: 'number' as const },
+          },
+          required: ['texto', 'segundoAproximado'],
+        },
       },
-    ],
-    generationConfig: {
-      responseMimeType: 'application/json',
+      hookLiteral: {
+        type: 'object' as const,
+        properties: {
+          primeraFraseDicha: { type: 'string' as const },
+          primerTextoEnPantalla: { type: 'string' as const },
+        },
+        required: ['primeraFraseDicha', 'primerTextoEnPantalla'],
+      },
+      escenas: { type: 'string' as const },
+      formatoDetectado: {
+        type: 'string' as const,
+        enum: ['testimonial', 'UGC', 'unboxing', 'talking-head', 'otro'],
+      },
+      notasDeRitmo: { type: 'string' as const },
     },
+    required: [
+      'copyHablado',
+      'copyEnPantalla',
+      'hookLiteral',
+      'escenas',
+      'formatoDetectado',
+      'notasDeRitmo',
+    ],
   }
 
-  const response = await fetch(
+  // Timeout 120s para procesamiento multimodal y generación de Gemini
+  const response = await fetchWithTimeout(
     `${GEMINI_API_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    }
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: systemInstruction }],
+        },
+        contents: [
+          {
+            parts: [
+              videoPart,
+              { text: prompt },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema,
+          temperature: 0.2,
+        },
+      }),
+    },
+    120_000
   )
 
   if (!response.ok) {
@@ -356,11 +369,10 @@ REGLAS:
     throw new Error('Gemini returned empty response — no candidates or text')
   }
 
-  // Parse JSON (Gemini with responseMimeType should return clean JSON)
+  // Parse JSON (Gemini con responseMimeType devuelve JSON, con fallback a bloque markdown)
   try {
     return JSON.parse(text) as GeminiPerception
   } catch {
-    // Try to extract JSON from possible markdown wrapping
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
     if (jsonMatch) {
       return JSON.parse(jsonMatch[1]) as GeminiPerception
@@ -373,68 +385,61 @@ REGLAS:
 // Meta Graph API — copy del anuncio
 // ---------------------------------------------------------------------------
 
-async function fetchMetaAdCopy(adId: string, accessToken: string): Promise<MetaAdCopy | null> {
-  try {
-    const fields = [
-      'creative{body,title,object_story_spec,asset_feed_spec}',
-    ].join(',')
+async function fetchMetaAdCopy(
+  adId: string,
+  accessToken?: string
+): Promise<MetaAdCopy | null> {
+  if (!accessToken) return null
 
-    const url = `https://graph.facebook.com/v19.0/${adId}?fields=${fields}&access_token=${accessToken}`
-    const response = await fetch(url)
+  try {
+    const url = `https://graph.facebook.com/v21.0/${adId}?fields=creative{id,name,title,body,asset_feed_spec,object_story_spec}&access_token=${accessToken}`
+    // Timeout 30s para Meta Graph API
+    const response = await fetchWithTimeout(url, {}, 30_000)
 
     if (!response.ok) {
-      console.warn(`Meta API error fetching ad copy (${response.status}), continuing without it`)
+      console.warn(`[analyze] Meta API error (${response.status}) fetching ad ${adId}`)
       return null
     }
 
     const data = await response.json()
-    if (data.error) {
-      console.warn(`Meta API error: ${data.error.message}, continuing without ad copy`)
-      return null
-    }
-
     const creative = data.creative
-    if (!creative) {
-      console.warn('No creative data returned from Meta API')
-      return null
-    }
+    if (!creative) return null
 
     const result: MetaAdCopy = {}
 
-    // Direct creative fields
     if (creative.body) result.body = creative.body
     if (creative.title) result.title = creative.title
 
-    // From object_story_spec
-    const oss = creative.object_story_spec
-    if (oss) {
-      const linkData = oss.link_data || oss.video_data
-      if (linkData) {
-        if (linkData.message && !result.body) result.body = linkData.message
-        if (linkData.name && !result.title) result.title = linkData.name
-        if (linkData.description) result.linkDescription = linkData.description
-        if (linkData.link) result.linkUrl = linkData.link
-      }
-    }
-
-    // Advantage+ Creative variations from asset_feed_spec
-    const afs = creative.asset_feed_spec
-    if (afs) {
-      if (afs.bodies && Array.isArray(afs.bodies)) {
-        result.advantagePlusBodies = afs.bodies
+    const assetFeed = creative.asset_feed_spec
+    if (assetFeed) {
+      if (assetFeed.bodies && Array.isArray(assetFeed.bodies)) {
+        result.advantagePlusBodies = assetFeed.bodies
           .map((b: { text?: string }) => b.text)
           .filter(Boolean)
       }
-      if (afs.titles && Array.isArray(afs.titles)) {
-        result.advantagePlusTitles = afs.titles
+      if (assetFeed.titles && Array.isArray(assetFeed.titles)) {
+        result.advantagePlusTitles = assetFeed.titles
           .map((t: { text?: string }) => t.text)
           .filter(Boolean)
       }
     }
 
-    return result
+    const linkData = creative.object_story_spec?.link_data
+    if (linkData) {
+      if (linkData.description && !result.body) {
+        result.linkDescription = linkData.description
+      }
+      if (linkData.link) {
+        result.linkUrl = linkData.link
+      }
+      if (linkData.name && !result.title) {
+        result.title = linkData.name
+      }
+    }
+
+    return Object.keys(result).length > 0 ? result : null
   } catch (err) {
-    console.warn('Error fetching Meta ad copy:', err)
+    console.warn(`[analyze] Failed to fetch Meta ad copy for ad ${adId}:`, err)
     return null
   }
 }
@@ -447,24 +452,17 @@ async function callClaude(
   geminiPerception: GeminiPerception,
   metaCopy: MetaAdCopy | null,
   metrics: AnalysisRequest['metrics'],
+  derived: ReturnType<typeof computeDerivedMetrics>,
   niche: string,
   benchmark: NicheBenchmark,
   apiKey: string
 ): Promise<ClaudeAnalysis> {
-  // Compute derived metrics for context
-  const ctr = metrics.impressions > 0 ? (metrics.linkClicks / metrics.impressions) * 100 : 0
-  const hookRate = metrics.videoPlays > 0 ? (metrics.hookViews / metrics.videoPlays) * 100 : 0
-  const holdRate = metrics.videoPlays > 0 ? (metrics.holdViews / metrics.videoPlays) * 100 : 0
-  const roas = metrics.spend > 0 ? metrics.revenue / metrics.spend : 0
-  const cpa = metrics.purchases > 0 ? metrics.spend / metrics.purchases : 0
-  const cpm = metrics.impressions > 0 ? (metrics.spend / metrics.impressions) * 1000 : 0
-
   const context = {
     percepcionDelVideo: geminiPerception,
     copyDelAnuncioEnMeta: metaCopy || 'No disponible (permisos o configuración)',
     metricasReales: {
       ...metrics,
-      derivadas: { ctr, hookRate, holdRate, roas, cpa, cpm },
+      derivadas: derived,
     },
     nicho: niche,
     benchmarksDelNicho: {
@@ -531,34 +529,39 @@ REGLAS:
       razones: { type: 'array' as const, items: { type: 'string' as const } },
       recomendaciones: { type: 'array' as const, items: { type: 'string' as const } },
     },
-    required: ['scoreVisual', 'analisisHook', 'analisisCopy', 'riesgoCumplimiento', 'razones', 'recomendaciones'],
+    required: [
+      'scoreVisual',
+      'analisisHook',
+      'analisisCopy',
+      'riesgoCumplimiento',
+      'razones',
+      'recomendaciones',
+    ],
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [
-        { role: 'user', content: userPrompt },
-      ],
-      output_config: {
-        format: {
-          type: 'json_schema',
-          json_schema: {
-            name: 'creative_analysis',
-            schema: claudeSchema,
-          },
-        },
+  // Timeout 120s para llamada a Claude Messages API
+  const response = await fetchWithTimeout(
+    'https://api.anthropic.com/v1/messages',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
       },
-    }),
-  })
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+        output_format: {
+          type: 'json_schema',
+          schema: claudeSchema,
+        },
+      }),
+    },
+    120_000
+  )
 
   if (!response.ok) {
     const errorText = await response.text()
@@ -576,6 +579,11 @@ REGLAS:
   try {
     return JSON.parse(textBlock.text) as ClaudeAnalysis
   } catch {
+    // Fallback: extraer JSON de posibles bloques markdown ```json ... ```
+    const jsonMatch = textBlock.text.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[1]) as ClaudeAnalysis
+    }
     throw new Error(`Claude returned invalid JSON: ${textBlock.text.slice(0, 500)}`)
   }
 }
@@ -610,7 +618,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     }
   }
 
-  const { creativeId, videoKey, adId, niche, metrics } = body
+  const { creativeId, videoKey, adId, niche, metrics, forceReanalyze } = body
 
   if (!creativeId || !videoKey || !niche || !metrics) {
     return {
@@ -640,8 +648,36 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
 
   const analysisStore = getStore(ANALYSIS_STORE)
 
-  // Background function returns 202 immediately — all work below happens async.
-  // Save initial 'processing' state so the frontend can poll for it.
+  // 2. DUPLICADOS: Verificar si ya existe un análisis en 'processing' o 'done'
+  try {
+    const existing = (await analysisStore.get(videoKey, { type: 'json' })) as CreativeAIAnalysis | null
+    if (existing) {
+      if (existing.status === 'processing') {
+        return {
+          statusCode: 409,
+          body: JSON.stringify({
+            error: 'Ya hay un análisis en curso para este creativo',
+            status: 'processing',
+            creativeId: existing.creativeId,
+          }),
+        }
+      }
+      if (existing.status === 'done' && !forceReanalyze) {
+        return {
+          statusCode: 409,
+          body: JSON.stringify({
+            error: 'El creativo ya fue analizado previamente. Envía forceReanalyze: true para sobreescribir.',
+            status: 'done',
+            creativeId: existing.creativeId,
+          }),
+        }
+      }
+    }
+  } catch (checkErr) {
+    console.warn('[analyze] Error verificando estado previo del análisis:', checkErr)
+  }
+
+  // Background function: guardamos estado inicial 'processing' para polling del frontend
   const initialState: CreativeAIAnalysis = {
     status: 'processing',
     creativeId,
@@ -661,22 +697,35 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     }
 
     const videoBuffer = Buffer.from(videoData)
-    console.log(`[analyze] Video loaded: ${(videoBuffer.length / 1024 / 1024).toFixed(1)}MB`)
+    const mimeType = detectVideoMimeType(videoBuffer)
+    console.log(`[analyze] Video size: ${videoBuffer.length} bytes, detected mime: ${mimeType}`)
 
-    // Detect mime type from magic bytes (same logic as get-video.ts)
-    let mimeType = 'video/mp4'
-    if (videoBuffer.length >= 12) {
-      if (videoBuffer[4] === 0x66 && videoBuffer[5] === 0x74 && videoBuffer[6] === 0x79 && videoBuffer[7] === 0x70) {
-        mimeType = 'video/mp4'
-      } else if (videoBuffer[0] === 0x1A && videoBuffer[1] === 0x45 && videoBuffer[2] === 0xDF && videoBuffer[3] === 0xA3) {
-        mimeType = 'video/webm'
+    // 2. Prepare video for Gemini (Files API vs inline)
+    let videoPart: Record<string, any>
+    if (videoBuffer.length > GEMINI_INLINE_LIMIT) {
+      console.log(`[analyze] Video > 20MB (${videoBuffer.length} bytes), using Gemini Files API...`)
+      const fileUri = await uploadToGeminiFilesAPI(videoBuffer, mimeType, geminiApiKey)
+      console.log(`[analyze] Uploaded to Files API: ${fileUri}`)
+      videoPart = {
+        fileData: {
+          mimeType,
+          fileUri,
+        },
+      }
+    } else {
+      console.log(`[analyze] Video <= 20MB, using inline base64...`)
+      videoPart = {
+        inlineData: {
+          mimeType,
+          data: videoBuffer.toString('base64'),
+        },
       }
     }
 
-    // 2 & 3. Run Gemini + Meta copy fetch in parallel
+    // 3. Call Gemini (video perception) and fetch Meta copy in parallel
     const [geminiPerception, metaCopy] = await Promise.all([
-      callGemini(videoBuffer, mimeType, geminiApiKey),
-      adId && metaAccessToken
+      callGemini(videoPart, geminiApiKey),
+      adId
         ? fetchMetaAdCopy(adId, metaAccessToken)
         : Promise.resolve(null),
     ])
@@ -684,12 +733,34 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     console.log(`[analyze] Gemini perception complete. Format: ${geminiPerception.formatoDetectado}`)
     console.log(`[analyze] Meta copy: ${metaCopy ? 'fetched' : 'not available'}`)
 
-    // 4. Call Claude with everything
-    const benchmark = DEFAULT_BENCHMARKS[niche] ?? GENERIC_BENCHMARK
+    // 4. Scoring de reglas importado desde src/lib/scoring.ts
+    const dummyCreative: Creative = {
+      id: creativeId,
+      name: creativeId,
+      niche,
+      format: '9:16',
+      launchDate: new Date().toISOString().slice(0, 10),
+      metrics: {
+        ...metrics,
+        history: [],
+      },
+    }
+
+    const benchmark = DEFAULT_BENCHMARKS[niche] ?? { ...GENERIC_BENCHMARK, niche }
+    const derived = computeDerivedMetrics(dummyCreative)
+    const subScores = computeSubScores(dummyCreative, benchmark)
+    const rulesComposite = Math.round(
+      subScores.engagement * benchmark.weights.engagement +
+        subScores.result * benchmark.weights.result +
+        subScores.efficiency * benchmark.weights.efficiency
+    )
+
+    // 5. Call Claude with everything
     const claudeAnalysis = await callClaude(
       geminiPerception,
       metaCopy,
       metrics,
+      derived,
       niche,
       benchmark,
       anthropicApiKey
@@ -697,15 +768,14 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
 
     console.log(`[analyze] Claude analysis complete. scoreVisual: ${claudeAnalysis.scoreVisual}`)
 
-    // 5. Calculate combined score
-    const rulesComposite = computeRulesComposite(metrics, niche)
+    // 6. Calculate combined score
     const scoreCombinado = Math.round(
       rulesComposite * RULES_WEIGHT + claudeAnalysis.scoreVisual * VISUAL_WEIGHT
     )
 
     console.log(`[analyze] Scores — rules: ${rulesComposite}, visual: ${claudeAnalysis.scoreVisual}, combined: ${scoreCombinado}`)
 
-    // 6. Save final result
+    // 7. Save final result
     const finalResult: CreativeAIAnalysis = {
       status: 'done',
       creativeId,
@@ -739,7 +809,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     }
   }
 
-  // Background functions return 202 automatically, but we still need a return
+  // Background functions return 202 automatically
   return {
     statusCode: 202,
     body: JSON.stringify({ message: 'Analysis started', creativeId }),
@@ -747,7 +817,3 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
 }
 
 export { handler }
-
-export const config: Config = {
-  background: true,
-}
