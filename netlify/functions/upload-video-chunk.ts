@@ -1,5 +1,6 @@
 import type { Handler, HandlerEvent } from '@netlify/functions'
 import { getStore, connectLambda } from '@netlify/blobs'
+import { faststart } from 'moov-faststart'
 import { isAuthorized } from './_auth'
 
 const CHUNK_STORE_NAME = 'video-chunks'
@@ -42,6 +43,43 @@ function sniffVideoContentType(buf: Buffer): string {
     }
   }
   return 'video/mp4'
+}
+
+/**
+ * Limite de tamano para el remux. faststart necesita el buffer de entrada y el
+ * de salida en memoria a la vez: medido, un archivo de 130 MB lleva el RSS a
+ * ~706 MB y la funcion dispone de ~1,19 GB. Por encima de esto se guarda sin
+ * optimizar en vez de arriesgar un OOM.
+ */
+const FASTSTART_MAX_BYTES = 150 * 1024 * 1024
+
+/**
+ * Mueve el atomo moov al inicio del archivo (lo que ffmpeg llama
+ * `-movflags +faststart`), reescribiendo las tablas de offsets stco/co64.
+ *
+ * Es un remux puro: no recodifica nada, el contenido decodificado es
+ * identico bit a bit y el tamano no cambia. Sin esto, un .mov de camara deja
+ * el moov al final y el navegador tiene que arrastrar casi todo el archivo
+ * antes de poder mostrar el primer frame.
+ *
+ * Nunca hace fallar la subida: ante cualquier problema se guarda el original.
+ */
+function tryFaststart(buf: Buffer<ArrayBuffer>, contentType: string): Buffer<ArrayBuffer> {
+  if (contentType !== 'video/mp4') return buf
+  if (buf.length > FASTSTART_MAX_BYTES) {
+    console.log(`faststart omitido: ${buf.length} bytes supera el limite de memoria`)
+    return buf
+  }
+  try {
+    const t0 = Date.now()
+    const out = faststart(buf)
+    console.log(`faststart aplicado en ${Date.now() - t0} ms (${buf.length} bytes)`)
+    return out
+  } catch (err) {
+    // Contenedor no soportado o ya invalido: se guarda tal cual.
+    console.warn('faststart omitido:', err instanceof Error ? err.message : String(err))
+    return buf
+  }
 }
 
 const handler: Handler = async (event: HandlerEvent) => {
@@ -187,14 +225,17 @@ const handler: Handler = async (event: HandlerEvent) => {
       console.log(`Content-Type normalizado: ${contentType} -> ${sniffedType}`)
     }
 
+    // Remux para dejar el moov al inicio; devuelve el original si no aplica.
+    const storedBuffer = tryFaststart(finalBuffer, sniffedType)
+
     // Guardamos size y contentType como metadata: Blobs NO expone el tamano
     // por si mismo (getMetadata solo devuelve { etag, metadata }), y sin el
     // tamano no se pueden servir Range requests ni Content-Length al hacer
     // streaming.
     await finalStore.set(
       finalKey,
-      finalBuffer.buffer.slice(finalBuffer.byteOffset, finalBuffer.byteOffset + finalBuffer.byteLength),
-      { metadata: { size: finalBuffer.length, contentType: sniffedType, filename } }
+      storedBuffer.buffer.slice(storedBuffer.byteOffset, storedBuffer.byteOffset + storedBuffer.byteLength),
+      { metadata: { size: storedBuffer.length, contentType: sniffedType, filename } }
     )
 
     console.log(`Video final guardado en ${finalKey}`)

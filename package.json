@@ -19,6 +19,7 @@
     "@react-three/fiber": "^9.6.1",
     "@tabler/icons-webfont": "2.44.0",
     "framer-motion": "^12.42.2",
+    "moov-faststart": "^1.0.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "three": "^0.185.1"
