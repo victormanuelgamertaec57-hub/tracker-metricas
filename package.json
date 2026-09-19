@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "icons:build": "node scripts/build-icon-subset.mjs",
+    "icons:check": "node scripts/check-icon-subset.mjs",
+    "prebuild": "npm run icons:check",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",

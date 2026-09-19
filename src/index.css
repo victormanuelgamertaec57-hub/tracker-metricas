@@ -2,8 +2,13 @@
 
 /* Iconos Tabler servidos desde el bundle. Antes venian de cdnjs, cuya URL
    (tabler-icons/2.44.0/iconfont/tabler-icons.min.css) devuelve 404: la hoja
-   nunca cargaba y los glifos no se renderizaban. */
-@import "@tabler/icons-webfont/tabler-icons.min.css";
+   nunca cargaba y los glifos no se renderizaban.
+
+   Se importa un subset con solo los iconos en uso (~4 KB frente a los 753 KB
+   de la fuente completa, que trae 4908 glifos). Generado por
+   scripts/build-icon-subset.mjs; `npm run icons:check` corre en prebuild y
+   falla si falta alguno. */
+@import "./generated/tabler-icons-subset.css";
 
 /* ================================================
    TECH BLACK — Design System
