@@ -61,12 +61,3 @@ export const CATEGORY_WORD: Record<Category, string> = {
   regular: 'regular',
   malo: 'apagar',
 }
-
-// Dot character for category label
-export const CATEGORY_DOT: Record<Category, string> = {
-  ganador: '●',
-  potencial: '●',
-  bueno: '●',
-  regular: '●',
-  malo: '●',
-}
