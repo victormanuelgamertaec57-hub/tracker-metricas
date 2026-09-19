@@ -36,9 +36,6 @@ export default async (req: Request, _context: Context): Promise<Response> => {
   }
   const provided = url.searchParams.get('token')
   if (provided !== secret) {
-    console.warn(
-      `[auth-diag] token no coincide: provided.length=${provided?.length ?? 'undefined'} secret.length=${secret.length}`
-    )
     return json(401, { error: 'Unauthorized' })
   }
 
@@ -97,16 +94,32 @@ export default async (req: Request, _context: Context): Promise<Response> => {
 /** Sirve un rango recortando el stream sin materializarlo en memoria. */
 function rangeResponse(stream: ReadableStream<Uint8Array>, range: string, size: number, contentType: string): Response {
   const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
-  if (!match) return json(416, { error: 'Invalid range' })
+  if (!match) return unsatisfiable(size)
 
-  const start = match[1] ? Number(match[1]) : 0
-  const end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
+  const rawStart = match[1]
+  const rawEnd = match[2]
+
+  // "bytes=-" no especifica nada.
+  if (!rawStart && !rawEnd) return unsatisfiable(size)
+
+  let start: number
+  let end: number
+
+  if (!rawStart) {
+    // suffix-range (RFC 7233 §2.1): "bytes=-N" son los ULTIMOS N bytes, no
+    // los primeros. Lo piden los reproductores con videos sin "fast start",
+    // donde el moov atom va al final del archivo.
+    const suffixLength = Number(rawEnd)
+    if (suffixLength === 0) return unsatisfiable(size)
+    start = Math.max(0, size - suffixLength) // si N > size, se sirve entero
+    end = size - 1
+  } else {
+    start = Number(rawStart)
+    end = rawEnd ? Math.min(Number(rawEnd), size - 1) : size - 1
+  }
 
   if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
-    return new Response(null, {
-      status: 416,
-      headers: { 'Content-Range': `bytes */${size}` },
-    })
+    return unsatisfiable(size)
   }
 
   let seen = 0
@@ -142,6 +155,14 @@ function rangeResponse(stream: ReadableStream<Uint8Array>, range: string, size: 
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'public, max-age=31536000',
     },
+  })
+}
+
+/** 416 con Content-Range, como exige RFC 7233 para rangos no satisfacibles. */
+function unsatisfiable(size: number): Response {
+  return new Response(null, {
+    status: 416,
+    headers: { 'Content-Range': `bytes */${size}` },
   })
 }
 

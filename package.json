@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck:functions": "tsc -p netlify/functions/tsconfig.json --noEmit"
+    "typecheck:functions": "tsc -p netlify/functions/tsconfig.json --noEmit",
+    "typecheck:edge-functions": "tsc -p netlify/edge-functions/tsconfig.json --noEmit",
+    "typecheck": "npm run typecheck:functions && npm run typecheck:edge-functions"
   },
   "dependencies": {
     "@netlify/blobs": "^10.7.10",
@@ -21,6 +23,7 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@netlify/edge-functions": "3.0.8",
     "@netlify/functions": "^5.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.2",
