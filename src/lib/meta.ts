@@ -131,18 +131,37 @@ export async function syncCreativeWithMeta(adId: string): Promise<MetaSyncResult
 }
 
 /**
- * Añade el token de autenticación a una URL de get-video.
+ * Path de la funcion Lambda original. Los creativos ya guardados en
+ * localStorage (y lo que devuelve upload-video-chunk) siguen usandolo.
+ */
+const LEGACY_VIDEO_PATH = '/.netlify/functions/get-video'
+
+/** Path de la edge function que sirve el video por streaming. */
+const EDGE_VIDEO_PATH = '/video'
+
+/**
+ * Añade el token de autenticación a una URL de get-video y reescribe el path
+ * viejo al de la edge function.
  * El navegador no puede enviar headers custom en `<video src=...>`,
  * así que el token va como query param.
  */
 export function authenticateVideoUrl(url: string): string {
   if (!APP_SECRET || !url) return url
   try {
+    const parsed = new URL(url, window.location.origin)
+
+    // La funcion Lambda devolvia 502 con videos de mas de ~6 MB (limite de
+    // tamano de respuesta). Reescribimos el path a la edge function, que hace
+    // streaming real. Se hace aqui, al reproducir, para que los creativos ya
+    // guardados funcionen sin migrar nada en localStorage.
+    if (parsed.pathname === LEGACY_VIDEO_PATH) {
+      parsed.pathname = EDGE_VIDEO_PATH
+    }
+
     // Idempotente: si la URL ya trae `token` (p. ej. un creativo guardado por
     // una version anterior), se reemplaza en vez de duplicarse. Netlify une los
     // parametros repetidos con coma ("a,a"), lo que rompia la comparacion en
     // isAuthorizedByToken y devolvia 401.
-    const parsed = new URL(url, window.location.origin)
     parsed.searchParams.delete('token')
     parsed.searchParams.set('token', APP_SECRET)
     return url.startsWith('http') ? parsed.toString() : `${parsed.pathname}${parsed.search}`

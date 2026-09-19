@@ -156,7 +156,15 @@ const handler: Handler = async (event: HandlerEvent) => {
     const finalStore = getStore(FINAL_STORE_NAME)
     const finalKey = `creative-videos/${uploadId}.mp4`
     
-    await finalStore.set(finalKey, finalBuffer.buffer.slice(finalBuffer.byteOffset, finalBuffer.byteOffset + finalBuffer.byteLength))
+    // Guardamos size y contentType como metadata: Blobs NO expone el tamano
+    // por si mismo (getMetadata solo devuelve { etag, metadata }), y sin el
+    // tamano no se pueden servir Range requests ni Content-Length al hacer
+    // streaming.
+    await finalStore.set(
+      finalKey,
+      finalBuffer.buffer.slice(finalBuffer.byteOffset, finalBuffer.byteOffset + finalBuffer.byteLength),
+      { metadata: { size: finalBuffer.length, contentType: contentType || 'video/mp4', filename } }
+    )
 
     console.log(`Video final guardado en ${finalKey}`)
 
