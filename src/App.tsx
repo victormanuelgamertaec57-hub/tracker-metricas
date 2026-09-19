@@ -9,10 +9,36 @@ import { APP_SECRET } from './lib/meta'
 
 const STORAGE_KEY = 'tracker-metricas:creatives'
 
+/**
+ * Repara creativos guardados por versiones anteriores:
+ * - `videoUrl` con `?token=` incrustado (el token se agrega al reproducir).
+ * - `videoUrl` con esquema `blob:` (URL temporal, muerta tras recargar).
+ */
+function sanitizeCreative(c: Creative): Creative {
+  if (!c?.videoUrl) return c
+  if (c.videoUrl.startsWith('blob:')) {
+    const { videoUrl: _dropped, ...rest } = c
+    return rest as Creative
+  }
+  if (c.videoUrl.includes('token=')) {
+    try {
+      const parsed = new URL(c.videoUrl, window.location.origin)
+      parsed.searchParams.delete('token')
+      return { ...c, videoUrl: `${parsed.pathname}${parsed.search}` }
+    } catch {
+      return c
+    }
+  }
+  return c
+}
+
 function loadInitial(): Creative[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) return parsed.map(sanitizeCreative)
+    }
   } catch {
     // ignorar y usar mock
   }

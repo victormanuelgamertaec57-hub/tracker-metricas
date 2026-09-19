@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { Creative, Format, RawMetrics } from '../types'
-import { fetchMetaLevel, syncCreativeWithMeta, APP_SECRET, authenticateVideoUrl, type MetaEntity, type MetaLevel } from '../lib/meta'
+import { fetchMetaLevel, syncCreativeWithMeta, APP_SECRET, type MetaEntity, type MetaLevel } from '../lib/meta'
 
 const NICHES = ['Berrinches', 'Método Hormonal', 'CalistenIA', 'Tai Chi']
 const FORMATS: Format[] = ['9:16', '1:1', '4:5', '16:9']
@@ -56,16 +56,25 @@ async function generateThumbnail(file: File): Promise<string> {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       const dataUrl = canvas.toDataURL('image/jpeg', 0.7)
       
-      URL.revokeObjectURL(video.src)
+      cleanup()
       resolve(dataUrl)
     }
     
     video.onerror = () => {
-      URL.revokeObjectURL(video.src)
+      cleanup()
       reject(new Error('Error al cargar el video para generar thumbnail'))
     }
     
-    video.src = URL.createObjectURL(file)
+    const objectUrl = URL.createObjectURL(file)
+    // Detener cualquier carga pendiente ANTES de revocar; si no, el elemento
+    // sigue pidiendo el blob ya revocado y la consola muestra
+    // `blob:... net::ERR_FILE_NOT_FOUND`.
+    function cleanup() {
+      video.removeAttribute('src')
+      video.load()
+      URL.revokeObjectURL(objectUrl)
+    }
+    video.src = objectUrl
   })
 }
 
@@ -448,7 +457,9 @@ export function UploadModal({
         setUploadChunkInfo({ current: currentChunk, total: totalChunks })
       })
       
-      setVideoUrl(authenticateVideoUrl(url))
+      // Guardamos SIEMPRE la key/URL cruda del servidor. El token se agrega
+      // al momento de reproducir (authenticateVideoUrl), nunca se persiste.
+      setVideoUrl(url)
       setUploadProgress(100)
       setUploadChunkInfo(null)
     } catch (err) {

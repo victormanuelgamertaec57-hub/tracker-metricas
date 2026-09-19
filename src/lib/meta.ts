@@ -137,6 +137,17 @@ export async function syncCreativeWithMeta(adId: string): Promise<MetaSyncResult
  */
 export function authenticateVideoUrl(url: string): string {
   if (!APP_SECRET || !url) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}token=${encodeURIComponent(APP_SECRET)}`
+  try {
+    // Idempotente: si la URL ya trae `token` (p. ej. un creativo guardado por
+    // una version anterior), se reemplaza en vez de duplicarse. Netlify une los
+    // parametros repetidos con coma ("a,a"), lo que rompia la comparacion en
+    // isAuthorizedByToken y devolvia 401.
+    const parsed = new URL(url, window.location.origin)
+    parsed.searchParams.delete('token')
+    parsed.searchParams.set('token', APP_SECRET)
+    return url.startsWith('http') ? parsed.toString() : `${parsed.pathname}${parsed.search}`
+  } catch {
+    const separator = url.includes('?') ? '&' : '?'
+    return `${url}${separator}token=${encodeURIComponent(APP_SECRET)}`
+  }
 }
