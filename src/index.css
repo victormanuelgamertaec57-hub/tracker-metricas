@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Iconos Tabler servidos desde el bundle. Antes venian de cdnjs, cuya URL
+   (tabler-icons/2.44.0/iconfont/tabler-icons.min.css) devuelve 404: la hoja
+   nunca cargaba y los glifos no se renderizaban. */
+@import "@tabler/icons-webfont/tabler-icons.min.css";
+
 /* ================================================
    TECH BLACK — Design System
    ================================================ */
