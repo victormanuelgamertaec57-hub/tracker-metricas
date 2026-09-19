@@ -63,9 +63,7 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     const rawSize = (res.metadata as Record<string, unknown> | undefined)?.size
     const size = typeof rawSize === 'number' ? rawSize : undefined
     const rawType = (res.metadata as Record<string, unknown> | undefined)?.contentType
-    const contentType = typeof rawType === 'string' && rawType.startsWith('video/')
-      ? rawType
-      : 'video/mp4'
+    const contentType = playableContentType(rawType)
 
     const range = req.headers.get('range')
     if (range && typeof size === 'number') {
@@ -89,6 +87,21 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     console.error('Get video edge error:', err)
     return json(500, { error: 'Failed to get video', detail: String(err) })
   }
+}
+
+/**
+ * Solo devolvemos tipos que los navegadores saben reproducir.
+ *
+ * Los blobs subidos antes de que upload-video-chunk normalizara por magic
+ * bytes guardaron el tipo que declaro el navegador: para un .mov eso es
+ * "video/quicktime", que Chrome no reconoce (canPlayType da cadena vacia) y
+ * deja el <video> cargando para siempre. Como el contenedor real es ISO-BMFF,
+ * servirlo como video/mp4 es correcto y evita tener que resubir nada.
+ */
+const PLAYABLE_TYPES = new Set(['video/mp4', 'video/webm', 'video/ogg'])
+
+function playableContentType(raw: unknown): string {
+  return typeof raw === 'string' && PLAYABLE_TYPES.has(raw) ? raw : 'video/mp4'
 }
 
 /** Sirve un rango recortando el stream sin materializarlo en memoria. */

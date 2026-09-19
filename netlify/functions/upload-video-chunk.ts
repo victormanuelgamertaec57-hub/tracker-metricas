@@ -20,6 +20,30 @@ interface ChunkUploadResponse {
   message: string
 }
 
+/**
+ * Determina el Content-Type real olfateando los magic bytes del archivo, en
+ * vez de confiar en el que declara el navegador.
+ *
+ * Un .mov llega del navegador como "video/quicktime", que Chrome NO reconoce
+ * (canPlayType devuelve cadena vacia) y deja el <video> sin cargar nunca.
+ * QuickTime y MP4 comparten la estructura ISO-BMFF ("ftyp" en el offset 4),
+ * asi que normalizar a video/mp4 es correcto y es lo que hacia la funcion
+ * Lambda original al servir.
+ */
+function sniffVideoContentType(buf: Buffer): string {
+  if (buf.length >= 12) {
+    // "ftyp" en offset 4 -> contenedor ISO-BMFF (MP4, M4V, MOV/QuickTime)
+    if (buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
+      return 'video/mp4'
+    }
+    // EBML -> WebM / Matroska
+    if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) {
+      return 'video/webm'
+    }
+  }
+  return 'video/mp4'
+}
+
 const handler: Handler = async (event: HandlerEvent) => {
   if (event.httpMethod !== 'POST') {
     return {
@@ -156,6 +180,13 @@ const handler: Handler = async (event: HandlerEvent) => {
     const finalStore = getStore(FINAL_STORE_NAME)
     const finalKey = `creative-videos/${uploadId}.mp4`
     
+    // El Content-Type se determina por magic bytes, NO por lo que declaro el
+    // cliente: los .mov llegan como video/quicktime y Chrome no los reproduce.
+    const sniffedType = sniffVideoContentType(finalBuffer)
+    if (sniffedType !== contentType) {
+      console.log(`Content-Type normalizado: ${contentType} -> ${sniffedType}`)
+    }
+
     // Guardamos size y contentType como metadata: Blobs NO expone el tamano
     // por si mismo (getMetadata solo devuelve { etag, metadata }), y sin el
     // tamano no se pueden servir Range requests ni Content-Length al hacer
@@ -163,7 +194,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     await finalStore.set(
       finalKey,
       finalBuffer.buffer.slice(finalBuffer.byteOffset, finalBuffer.byteOffset + finalBuffer.byteLength),
-      { metadata: { size: finalBuffer.length, contentType: contentType || 'video/mp4', filename } }
+      { metadata: { size: finalBuffer.length, contentType: sniffedType, filename } }
     )
 
     console.log(`Video final guardado en ${finalKey}`)
