@@ -166,6 +166,37 @@ function Scene({ paused }: { paused: boolean }) {
   )
 }
 
+/**
+ * Devuelve true cuando nadie puede estar viendo el canvas: o salio del
+ * viewport, o la pestana no esta activa. Sirve para detener el render loop,
+ * que de otro modo corre indefinidamente aunque el logo no se vea.
+ */
+function useIsHidden(ref: React.RefObject<HTMLDivElement | null>): boolean {
+  const [offscreen, setOffscreen] = useState(false)
+  const [tabHidden, setTabHidden] = useState(
+    () => typeof document !== 'undefined' && document.hidden
+  )
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      ([entry]) => setOffscreen(!entry.isIntersecting),
+      { threshold: 0 }
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [ref])
+
+  useEffect(() => {
+    const onVisibility = () => setTabHidden(document.hidden)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
+
+  return offscreen || tabHidden
+}
+
 // Static fallback for reduced motion
 function StaticFallback() {
   return (
@@ -183,6 +214,8 @@ function StaticFallback() {
 // Main export component
 export function Header3D() {
   const [isReduced, setIsReduced] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const isHidden = useIsHidden(containerRef)
   
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -198,7 +231,7 @@ export function Header3D() {
   }
   
   return (
-    <div className="w-10 h-10">
+    <div className="w-10 h-10" ref={containerRef}>
       <Canvas
         camera={{ position: [0, 0, 2], fov: 45 }}
         dpr={[1, 1.5]}
@@ -208,8 +241,12 @@ export function Header3D() {
           powerPreference: 'low-power',
         }}
         style={{ background: 'transparent' }}
+        // `never` detiene el requestAnimationFrame de react-three-fiber por
+        // completo; el `paused` de Scene por si solo frenaba las animaciones
+        // pero el loop seguia corriendo y repintando cada frame.
+        frameloop={isHidden ? 'never' : 'always'}
       >
-        <Scene paused={false} />
+        <Scene paused={isHidden} />
       </Canvas>
     </div>
   )
