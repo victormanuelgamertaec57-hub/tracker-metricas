@@ -525,6 +525,7 @@ REGLAS:
           motivo: { type: 'string' as const },
         },
         required: ['nivel', 'frasesDeRiesgo', 'motivo'],
+        additionalProperties: false,
       },
       razones: { type: 'array' as const, items: { type: 'string' as const } },
       recomendaciones: { type: 'array' as const, items: { type: 'string' as const } },
@@ -537,6 +538,7 @@ REGLAS:
       'razones',
       'recomendaciones',
     ],
+    additionalProperties: false,
   }
 
   // Timeout 120s para llamada a Claude Messages API
@@ -560,9 +562,11 @@ REGLAS:
         max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
-        output_format: {
-          type: 'json_schema',
-          schema: claudeSchema,
+        output_config: {
+          format: {
+            type: 'json_schema',
+            schema: claudeSchema,
+          },
         },
       }),
     },
