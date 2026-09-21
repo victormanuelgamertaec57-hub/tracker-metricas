@@ -2,6 +2,7 @@ import type { Handler, HandlerEvent } from '@netlify/functions'
 import { getStore, connectLambda } from '@netlify/blobs'
 import { faststart } from 'moov-faststart'
 import { isAuthorized } from './_auth'
+import { readMp4DurationSec } from './_mp4'
 
 const CHUNK_STORE_NAME = 'video-chunks'
 const FINAL_STORE_NAME = 'creative-videos'
@@ -18,6 +19,7 @@ interface ChunkUploadRequest {
 interface ChunkUploadResponse {
   videoUrl?: string
   key?: string
+  durationSec?: number | null
   message: string
 }
 
@@ -228,6 +230,10 @@ const handler: Handler = async (event: HandlerEvent) => {
     // Remux para dejar el moov al inicio; devuelve el original si no aplica.
     const storedBuffer = tryFaststart(finalBuffer, sniffedType)
 
+    // Duración para compararla luego con la del video del anuncio en Meta.
+    // null si no se puede leer: nunca bloquea la subida.
+    const durationSec = readMp4DurationSec(storedBuffer)
+
     // Guardamos size y contentType como metadata: Blobs NO expone el tamano
     // por si mismo (getMetadata solo devuelve { etag, metadata }), y sin el
     // tamano no se pueden servir Range requests ni Content-Length al hacer
@@ -235,7 +241,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     await finalStore.set(
       finalKey,
       storedBuffer.buffer.slice(storedBuffer.byteOffset, storedBuffer.byteOffset + storedBuffer.byteLength),
-      { metadata: { size: storedBuffer.length, contentType: sniffedType, filename } }
+      { metadata: { size: storedBuffer.length, contentType: sniffedType, filename, durationSec } }
     )
 
     console.log(`Video final guardado en ${finalKey}`)
@@ -256,6 +262,7 @@ const handler: Handler = async (event: HandlerEvent) => {
         key: finalKey,
         message: 'Video completo subido y reensamblado',
         fileSize: finalBuffer.length,
+        durationSec,
       } as ChunkUploadResponse),
     }
   } catch (err) {

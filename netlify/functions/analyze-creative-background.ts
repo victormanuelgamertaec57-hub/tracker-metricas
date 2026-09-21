@@ -1,6 +1,7 @@
 import type { Handler, HandlerEvent, HandlerContext } from '@netlify/functions'
 import { getStore, connectLambda } from '@netlify/blobs'
 import { isAuthorized } from './_auth'
+import { readMp4DurationSec, DURATION_TOLERANCE_SEC } from './_mp4'
 import {
   DEFAULT_BENCHMARKS,
   GENERIC_BENCHMARK,
@@ -15,6 +16,8 @@ import type { Creative, NicheBenchmark } from '../../src/types'
 
 const VIDEO_STORE = 'creative-videos'
 const ANALYSIS_STORE = 'creative-ai-analysis'
+// creativeId es un UUID generado en el navegador; se usa como key del análisis.
+const CREATIVE_ID_PATTERN = /^[A-Za-z0-9-]{1,100}$/
 
 /** Umbral para decidir Files API vs inline base64 (bytes). */
 const GEMINI_INLINE_LIMIT = 20 * 1024 * 1024 // 20 MB
@@ -81,6 +84,12 @@ interface MetaAdCopy {
 }
 
 interface ClaudeAnalysis {
+  coherenciaVideoCopy: {
+    coinciden: boolean
+    temaVideo: string
+    temaCopy: string
+    motivo: string
+  }
   scoreVisual: number
   analisisHook: string
   analisisCopy: string
@@ -93,10 +102,26 @@ interface ClaudeAnalysis {
   recomendaciones: string[]
 }
 
+/**
+ * Comparación de la duración del video subido con la del video del anuncio en
+ * Meta. Si alguna de las dos no se pudo leer, no se compara (coincide = null).
+ */
+interface VerificacionVideo {
+  duracionSubidaSeg: number | null
+  duracionMetaSeg: number | null
+  diferenciaSeg: number | null
+  coincide: boolean | null
+}
+
 interface CreativeAIAnalysis {
   status: 'processing' | 'done' | 'error'
   creativeId: string
+  videoKey?: string
   timestamp: string
+  // "posible video equivocado" cuando la duración o el tema no coinciden con
+  // el anuncio de Meta. null = sin alerta.
+  alertaVideo?: string | null
+  verificacionVideo?: VerificacionVideo
   geminiPerception?: GeminiPerception
   metaCopy?: MetaAdCopy | null
   claudeAnalysis?: ClaudeAnalysis
@@ -386,25 +411,34 @@ Devuelve un JSON con esta estructura exacta:
 // Meta Graph API — copy del anuncio
 // ---------------------------------------------------------------------------
 
-async function fetchMetaAdCopy(
+interface MetaAdCreative {
+  copy: MetaAdCopy | null
+  videoId: string | null
+}
+
+async function fetchMetaAdCreative(
   adId: string,
   accessToken?: string
-): Promise<MetaAdCopy | null> {
-  if (!accessToken) return null
+): Promise<MetaAdCreative> {
+  const empty: MetaAdCreative = { copy: null, videoId: null }
+  if (!accessToken) return empty
 
   try {
-    const url = `https://graph.facebook.com/v21.0/${adId}?fields=creative{id,name,title,body,asset_feed_spec,object_story_spec}&access_token=${accessToken}`
+    const url = `https://graph.facebook.com/v21.0/${adId}?fields=creative{id,name,title,body,video_id,asset_feed_spec,object_story_spec}&access_token=${accessToken}`
     // Timeout 30s para Meta Graph API
     const response = await fetchWithTimeout(url, {}, 30_000)
 
     if (!response.ok) {
       console.warn(`[analyze] Meta API error (${response.status}) fetching ad ${adId}`)
-      return null
+      return empty
     }
 
     const data = await response.json()
     const creative = data.creative
-    if (!creative) return null
+    if (!creative) return empty
+
+    const videoId: string | null =
+      creative.video_id || creative.object_story_spec?.video_data?.video_id || null
 
     const result: MetaAdCopy = {}
 
@@ -438,10 +472,50 @@ async function fetchMetaAdCopy(
       }
     }
 
-    return Object.keys(result).length > 0 ? result : null
+    return { copy: Object.keys(result).length > 0 ? result : null, videoId }
   } catch (err) {
     console.warn(`[analyze] Failed to fetch Meta ad copy for ad ${adId}:`, err)
+    return empty
+  }
+}
+
+/**
+ * Duración (segundos) del video del anuncio en Meta. null si no se puede leer.
+ */
+async function fetchMetaVideoLengthSec(
+  videoId: string,
+  accessToken: string
+): Promise<number | null> {
+  try {
+    const url = `https://graph.facebook.com/v21.0/${videoId}?fields=length&access_token=${accessToken}`
+    const response = await fetchWithTimeout(url, {}, 15_000)
+    if (!response.ok) {
+      console.warn(`[analyze] Meta API error (${response.status}) leyendo duración del video ${videoId}`)
+      return null
+    }
+    const data = await response.json()
+    const length = Number(data.length)
+    return Number.isFinite(length) && length > 0 ? length : null
+  } catch (err) {
+    console.warn(`[analyze] No se pudo leer la duración del video ${videoId} en Meta:`, err)
     return null
+  }
+}
+
+/**
+ * Compara la duración del video subido con la del anuncio en Meta.
+ * Solo compara cuando ambas se pudieron leer: si falta una, no hay aviso.
+ */
+function verificarDuracion(subida: number | null, meta: number | null): VerificacionVideo {
+  if (subida === null || meta === null) {
+    return { duracionSubidaSeg: subida, duracionMetaSeg: meta, diferenciaSeg: null, coincide: null }
+  }
+  const diferenciaSeg = Math.round(Math.abs(subida - meta) * 100) / 100
+  return {
+    duracionSubidaSeg: Math.round(subida * 100) / 100,
+    duracionMetaSeg: Math.round(meta * 100) / 100,
+    diferenciaSeg,
+    coincide: diferenciaSeg <= DURATION_TOLERANCE_SEC,
   }
 }
 
@@ -456,11 +530,15 @@ async function callClaude(
   derived: ReturnType<typeof computeDerivedMetrics>,
   niche: string,
   benchmark: NicheBenchmark,
+  verificacionVideo: VerificacionVideo,
   apiKey: string
 ): Promise<ClaudeAnalysis> {
   const context = {
     percepcionDelVideo: geminiPerception,
     copyDelAnuncioEnMeta: metaCopy || 'No disponible (permisos o configuración)',
+    // coincide=false: el video subido no dura lo mismo que el del anuncio.
+    // coincide=null: no se pudo comparar.
+    verificacionDuracionVideo: verificacionVideo,
     metricasReales: {
       ...metrics,
       derivadas: derived,
@@ -493,6 +571,12 @@ ${JSON.stringify(context, null, 2)}
 
 Devuelve un JSON con esta estructura:
 {
+  "coherenciaVideoCopy": {
+    "coinciden": <true | false: el video y el copy del anuncio en Meta hablan del mismo tema, producto y audiencia>,
+    "temaVideo": "<tema del video en una frase>",
+    "temaCopy": "<tema del copy del anuncio en Meta en una frase, o 'no disponible'>",
+    "motivo": "<por qué coinciden o no>"
+  },
   "scoreVisual": <número 0-100, qué tan bien ejecutado está el creativo visualmente y en su narrativa>,
   "analisisHook": "<por qué el hook engancha o no, CITA el hook literal del video>",
   "analisisCopy": "<evaluación del copy hablado en el video + copy en pantalla + copy del anuncio en Meta — ¿son coherentes? ¿refuerzan la misma idea?>",
@@ -504,6 +588,15 @@ Devuelve un JSON con esta estructura:
   "razones": ["razón 1 de por qué funciona o no", "razón 2"],
   "recomendaciones": ["acción concreta 1", "acción concreta 2"]
 }
+
+PRIMERA REGLA (verificación del video, antes de todo lo demás):
+- Llena coherenciaVideoCopy ANTES de analizar el embudo. Compara el tema del video (copy hablado, texto en pantalla, escenas) con el del copy del anuncio en Meta.
+- Si el copy de Meta no está disponible, usa coinciden = true, temaCopy = "no disponible" y explícalo en motivo.
+- Si coinciden = false, o si verificacionDuracionVideo.coincide = false: el video subido probablemente NO es el que corre en el anuncio, así que las métricas no le corresponden. En ese caso:
+  - analisisCopy debe empezar exactamente con "⚠️ Posible video equivocado:" seguido de la evidencia (temas distintos y/o duraciones distintas).
+  - NO diagnostiques el embudo ni atribuyas el CTR, el hook rate o las conversiones al video.
+  - La primera recomendación debe ser verificar y volver a subir el video correcto del anuncio.
+  - Sí evalúa el riesgo de cumplimiento de cada pieza por separado.
 
 REGLAS:
 - scoreVisual mide la calidad del creativo como pieza de comunicación, independiente de las métricas.
@@ -517,6 +610,17 @@ REGLAS:
   const claudeSchema = {
     type: 'object' as const,
     properties: {
+      coherenciaVideoCopy: {
+        type: 'object' as const,
+        properties: {
+          coinciden: { type: 'boolean' as const },
+          temaVideo: { type: 'string' as const },
+          temaCopy: { type: 'string' as const },
+          motivo: { type: 'string' as const },
+        },
+        required: ['coinciden', 'temaVideo', 'temaCopy', 'motivo'],
+        additionalProperties: false,
+      },
       scoreVisual: { type: 'number' as const, description: 'Score visual 0-100' },
       analisisHook: { type: 'string' as const },
       analisisCopy: { type: 'string' as const },
@@ -534,6 +638,7 @@ REGLAS:
       recomendaciones: { type: 'array' as const, items: { type: 'string' as const } },
     },
     required: [
+      'coherenciaVideoCopy',
       'scoreVisual',
       'analisisHook',
       'analisisCopy',
@@ -651,6 +756,15 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     }
   }
 
+  // El análisis se guarda con creativeId como key: dos creativos que compartan
+  // video no se pisan el análisis entre sí.
+  if (!CREATIVE_ID_PATTERN.test(creativeId)) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: 'creativeId inválido' }),
+    }
+  }
+
   // Check API keys
   const geminiApiKey = process.env.GEMINI_API_KEY
   const anthropicApiKey = process.env.ANTHROPIC_API_KEY
@@ -674,7 +788,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
 
   // 2. DUPLICADOS: Verificar si ya existe un análisis en 'processing' o 'done'
   try {
-    const existing = (await analysisStore.get(videoKey, { type: 'json' })) as CreativeAIAnalysis | null
+    const existing = (await analysisStore.get(creativeId, { type: 'json' })) as CreativeAIAnalysis | null
     if (existing) {
       if (existing.status === 'processing') {
         return {
@@ -712,7 +826,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
   }
 
   if (!forceReanalyze) {
-    const writeResult = await analysisStore.set(videoKey, JSON.stringify(initialState), {
+    const writeResult = await analysisStore.set(creativeId, JSON.stringify(initialState), {
       onlyIfNew: true,
     })
 
@@ -727,7 +841,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
       }
     }
   } else {
-    await analysisStore.set(videoKey, JSON.stringify(initialState))
+    await analysisStore.set(creativeId, JSON.stringify(initialState))
   }
 
   console.log(`[analyze] Starting analysis for creative ${creativeId}, videoKey=${videoKey}`)
@@ -743,6 +857,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
 
     const videoBuffer = Buffer.from(videoData)
     const mimeType = detectVideoMimeType(videoBuffer)
+    const duracionSubidaSeg = readMp4DurationSec(videoBuffer)
     console.log(`[analyze] Video size: ${videoBuffer.length} bytes, detected mime: ${mimeType}`)
 
     // 2. Prepare video for Gemini (Files API vs inline)
@@ -768,12 +883,21 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     }
 
     // 3. Call Gemini (video perception) and fetch Meta copy in parallel
-    const [geminiPerception, metaCopy] = await Promise.all([
+    const [geminiPerception, metaCreative] = await Promise.all([
       callGemini(videoPart, geminiApiKey),
       adId
-        ? fetchMetaAdCopy(adId, metaAccessToken)
-        : Promise.resolve(null),
+        ? fetchMetaAdCreative(adId, metaAccessToken)
+        : Promise.resolve({ copy: null, videoId: null }),
     ])
+    const metaCopy = metaCreative.copy
+
+    // 3b. Duración del video subido vs. la del video del anuncio en Meta.
+    const duracionMetaSeg =
+      metaCreative.videoId && metaAccessToken
+        ? await fetchMetaVideoLengthSec(metaCreative.videoId, metaAccessToken)
+        : null
+    const verificacionVideo = verificarDuracion(duracionSubidaSeg, duracionMetaSeg)
+    console.log(`[analyze] Duración subida=${duracionSubidaSeg ?? 'n/d'}s, Meta=${duracionMetaSeg ?? 'n/d'}s, coincide=${verificacionVideo.coincide}`)
 
     console.log(`[analyze] Gemini perception complete. Format: ${geminiPerception.formatoDetectado}`)
     console.log(`[analyze] Meta copy: ${metaCopy ? 'fetched' : 'not available'}`)
@@ -808,6 +932,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
       derived,
       niche,
       benchmark,
+      verificacionVideo,
       anthropicApiKey
     )
 
@@ -821,10 +946,23 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     console.log(`[analyze] Scores — rules: ${rulesComposite}, visual: ${claudeAnalysis.scoreVisual}, combined: ${scoreCombinado}`)
 
     // 7. Save final result
+    // Aviso determinista, independiente de la IA: basta con que la duración o
+    // el tema no coincidan para marcar el análisis.
+    // Sin copy de Meta no hay con qué comparar el tema: se fuerza "coinciden"
+    // aquí en vez de confiar solo en que el modelo siga el prompt.
+    if (!metaCopy) {
+      claudeAnalysis.coherenciaVideoCopy.coinciden = true
+    }
+    const posibleVideoEquivocado =
+      verificacionVideo.coincide === false || claudeAnalysis.coherenciaVideoCopy.coinciden === false
+
     const finalResult: CreativeAIAnalysis = {
       status: 'done',
       creativeId,
+      videoKey,
       timestamp: new Date().toISOString(),
+      alertaVideo: posibleVideoEquivocado ? 'posible video equivocado' : null,
+      verificacionVideo,
       geminiPerception,
       metaCopy,
       claudeAnalysis,
@@ -832,7 +970,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
       rulesComposite,
     }
 
-    await analysisStore.set(videoKey, JSON.stringify(finalResult))
+    await analysisStore.set(creativeId, JSON.stringify(finalResult))
     console.log(`[analyze] Analysis saved for creative ${creativeId}`)
 
   } catch (err) {
@@ -848,7 +986,7 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
     }
 
     try {
-      await analysisStore.set(videoKey, JSON.stringify(errorResult))
+      await analysisStore.set(creativeId, JSON.stringify(errorResult))
     } catch (saveErr) {
       console.error('[analyze] Failed to save error state:', saveErr)
     }
@@ -861,4 +999,4 @@ const handler: Handler = async (event: HandlerEvent, _context: HandlerContext) =
   }
 }
 
-export { handler }
+export { handler, verificarDuracion }

@@ -105,7 +105,7 @@ async function uploadChunk(
   filename: string,
   contentType: string,
   retries = MAX_RETRIES
-): Promise<{ videoUrl?: string; error?: string }> {
+): Promise<{ videoUrl?: string; durationSec?: number | null; error?: string }> {
   const base64 = await blobToBase64(chunk)
   const isLastChunk = chunkNumber === totalChunks - 1
   
@@ -137,7 +137,7 @@ async function uploadChunk(
       
       // Si es el último chunk, devuelve la URL del video reensamblado
       if (isLastChunk && data.videoUrl) {
-        return { videoUrl: data.videoUrl }
+        return { videoUrl: data.videoUrl, durationSec: data.durationSec ?? null }
       }
       
       return {} // Éxito (chunk regular o mensaje intermedio)
@@ -162,7 +162,7 @@ async function uploadChunk(
 async function uploadVideo(
   file: File,
   onProgress?: (progress: number, currentChunk: number, totalChunks: number) => void
-): Promise<{ videoUrl: string }> {
+): Promise<{ videoUrl: string; durationSec: number | null }> {
   const chunkSizeBytes = CHUNK_SIZE_MB * 1024 * 1024
   const totalChunks = Math.ceil(file.size / chunkSizeBytes)
   const uploadId = crypto.randomUUID()
@@ -186,6 +186,7 @@ async function uploadVideo(
   
   // Subir cada chunk secuencialmente
   let finalVideoUrl: string | null = null
+  let durationSec: number | null = null
   
   for (let i = 0; i < chunks.length; i++) {
     const progress = ((i + 1) / totalChunks) * 100
@@ -203,6 +204,7 @@ async function uploadVideo(
     // El último chunk devuelve la URL final
     if (result.videoUrl) {
       finalVideoUrl = result.videoUrl
+      durationSec = result.durationSec ?? null
     }
     
     console.log(`Chunk ${i + 1}/${totalChunks} subido`)
@@ -213,7 +215,7 @@ async function uploadVideo(
   }
   
   onProgress?.(100, totalChunks, totalChunks)
-  return { videoUrl: finalVideoUrl }
+  return { videoUrl: finalVideoUrl, durationSec }
 }
 
 export function UploadModal({
@@ -262,6 +264,7 @@ export function UploadModal({
   // Video upload state
   const [videoFile, setVideoFile] = useState<File | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [videoDurationSec, setVideoDurationSec] = useState<number | null>(null)
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [uploadChunkInfo, setUploadChunkInfo] = useState<{ current: number; total: number } | null>(null)
@@ -461,7 +464,7 @@ export function UploadModal({
       setUploadProgress(10)
       
       // Subir video en chunks
-      const { videoUrl: url } = await uploadVideo(file, (progress, currentChunk, totalChunks) => {
+      const { videoUrl: url, durationSec } = await uploadVideo(file, (progress, currentChunk, totalChunks) => {
         // La subida va del 10% al 100%
         const uploadProgress = 10 + (progress * 0.9)
         setUploadProgress(uploadProgress)
@@ -471,6 +474,7 @@ export function UploadModal({
       // Guardamos SIEMPRE la key/URL cruda del servidor. El token se agrega
       // al momento de reproducir (authenticateVideoUrl), nunca se persiste.
       setVideoUrl(url)
+      setVideoDurationSec(durationSec)
       setUploadProgress(100)
       setUploadChunkInfo(null)
     } catch (err) {
@@ -518,6 +522,7 @@ export function UploadModal({
   function removeVideo() {
     setVideoFile(null)
     setVideoUrl(null)
+    setVideoDurationSec(null)
     setThumbnailUrl(null)
     setUploadProgress(0)
     setUploadChunkInfo(null)
@@ -587,6 +592,7 @@ export function UploadModal({
         metaAdId: selectedAdId || undefined,
         metaAdAccountId: extras?.adAccountId,
         videoUrl: videoUrl || undefined,
+        videoDurationSec: videoUrl ? videoDurationSec : undefined,
         thumbnailUrl: thumbnailUrl || undefined,
         metrics: {
           spend: num(spend),

@@ -46,6 +46,7 @@ export interface Creative {
   thumbnailUrl?: string
   videoUrl?: string
   videoUnavailable?: boolean // true cuando Meta API no devolvió video por permisos
+  videoDurationSec?: number | null // duración del video subido; null si no se pudo leer
   launchDate: string
   metaAdId?: string
   metaAdAccountId?: string // para link a Meta Ads Manager

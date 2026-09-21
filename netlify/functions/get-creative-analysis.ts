@@ -32,19 +32,20 @@ const handler: Handler = async (event: HandlerEvent) => {
     }
   }
 
-  const key = event.queryStringParameters?.key
+  // El análisis se guarda por creativeId (antes era por la key del video).
+  const creativeId = event.queryStringParameters?.creativeId
 
-  if (!key) {
+  if (!creativeId || !/^[A-Za-z0-9-]{1,100}$/.test(creativeId)) {
     return {
       statusCode: 400,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Missing required query param: key' }),
+      body: JSON.stringify({ error: 'Missing or invalid query param: creativeId' }),
     }
   }
 
   try {
     const store = getStore(ANALYSIS_STORE)
-    const raw = await store.get(key, { type: 'text' })
+    const raw = await store.get(creativeId, { type: 'text' })
 
     if (!raw) {
       return {
