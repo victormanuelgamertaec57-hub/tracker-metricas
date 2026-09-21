@@ -14,7 +14,8 @@ const STORAGE_KEY = 'tracker-metricas:creatives'
  * - `videoUrl` con `?token=` incrustado (el token se agrega al reproducir).
  * - `videoUrl` con esquema `blob:` (URL temporal, muerta tras recargar).
  */
-function sanitizeCreative(c: Creative): Creative {
+function sanitizeCreative(raw: Creative): Creative {
+  const c = legacyZerosToNull(raw)
   if (!c?.videoUrl) return c
   if (c.videoUrl.startsWith('blob:')) {
     const { videoUrl: _dropped, ...rest } = c
@@ -30,6 +31,30 @@ function sanitizeCreative(c: Creative): Creative {
     }
   }
   return c
+}
+
+/**
+ * Versiones anteriores guardaban avgWatchTime y retención en 0 cuando no había
+ * dato (el modal los fijaba en 0). Un 0 falso se lee como "nadie vio el video",
+ * así que se convierte en null ("sin dato"). Retención con los cuatro cortes en
+ * 0 no es un dato real.
+ */
+function legacyZerosToNull(c: Creative): Creative {
+  const m = c?.metrics
+  if (!m) return c
+  const noRetention =
+    m.retention25 === 0 && m.retention50 === 0 && m.retention75 === 0 && m.retention95 === 0
+  if (m.avgWatchTime !== 0 && !noRetention) return c
+  return {
+    ...c,
+    metrics: {
+      ...m,
+      avgWatchTime: m.avgWatchTime === 0 ? null : m.avgWatchTime,
+      ...(noRetention
+        ? { retention25: null, retention50: null, retention75: null, retention95: null }
+        : {}),
+    },
+  }
 }
 
 function loadInitial(): Creative[] {

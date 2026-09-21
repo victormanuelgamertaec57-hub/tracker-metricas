@@ -293,7 +293,7 @@ export function CreativeDetail({
         <MetricStat label="CTR" value={`${d.ctr.toFixed(1)}%`} health={classifyHealth(d.ctr, benchmark.ctrTarget, true)} />
         <MetricStat label="Hook rate" value={`${d.hookRate.toFixed(0)}%`} health={classifyHealth(d.hookRate, benchmark.hookRateTarget, true)} />
         <MetricStat label="Hold rate" value={`${d.holdRate.toFixed(0)}%`} health={classifyHealth(d.holdRate, benchmark.holdRateTarget, true)} />
-        <MetricStat label="Tiempo prom. viendo" value={`${m.avgWatchTime.toFixed(1)}s`} />
+        <MetricStat label="Tiempo prom. viendo" value={m.avgWatchTime === null ? 'sin dato' : `${m.avgWatchTime.toFixed(1)}s`} />
         <MetricStat label="Frecuencia" value={m.frequency.toFixed(1)} health={classifyHealth(m.frequency, 2.5, false)} />
         <MetricStat label="CPM" value={`$${d.cpm.toFixed(2)}`} health={classifyHealth(d.cpm, 10, false)} />
         <MetricStat label="CPC" value={`$${d.cpc.toFixed(2)}`} health={classifyHealth(d.cpc, 0.4, false)} />
@@ -320,7 +320,8 @@ export function CreativeDetail({
             { label: '75%', v: m.retention75, stage: 75 as const },
             { label: '95%', v: m.retention95, stage: 95 as const },
           ].map((r) => {
-            const h = retentionHealth(r.v, r.stage)
+            // null = sin dato: se muestra vacío, no como 0%.
+            const h = r.v === null ? 'neutral' : retentionHealth(r.v, r.stage)
             const color = h === 'good' ? 'var(--cat-ganador)' : h === 'bad' ? 'var(--cat-apagar)' : 'var(--text-primary)'
             return (
               <div key={r.label}>
@@ -328,11 +329,11 @@ export function CreativeDetail({
                 <div className="rounded h-1.5" style={{ background: 'var(--bg-base)' }}>
                   <div
                     className="h-full rounded"
-                    style={{ width: `${r.v}%`, background: color }}
+                    style={{ width: `${r.v ?? 0}%`, background: color }}
                   />
                 </div>
                 <p className="text-[11px] m-0 mt-1" style={{ color }}>
-                  {r.v}%
+                  {r.v === null ? 'sin dato' : `${r.v.toFixed(0)}%`}
                 </p>
               </div>
             )

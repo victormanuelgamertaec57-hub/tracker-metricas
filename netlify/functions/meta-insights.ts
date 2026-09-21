@@ -18,7 +18,10 @@ interface MetaDayInsight {
   actions?: MetaAction[]
   action_values?: MetaAction[]
   cost_per_action_type?: MetaAction[]
-  video_play_actions?: string
+  // La Graph API devuelve las metricas de video como listas de acciones
+  // ([{ action_type: 'video_view', value: '123' }]), no como numeros.
+  video_play_actions?: MetaAction[]
+  video_thruplay_watched_actions?: MetaAction[]
   video_p25_watched_actions?: MetaAction[]
   video_p50_watched_actions?: MetaAction[]
   video_p75_watched_actions?: MetaAction[]
@@ -45,12 +48,12 @@ interface NormalizedMetrics {
   holdViews: number
   purchases: number
   revenue: number
-  avgWatchTime: number
+  avgWatchTime: number | null
   frequency: number
-  retention25: number
-  retention50: number
-  retention75: number
-  retention95: number
+  retention25: number | null
+  retention50: number | null
+  retention75: number | null
+  retention95: number | null
   history: Array<{ date: string; ctr: number; frequency: number; roas: number }>
   demographics: NormalizedDemographics
 }
@@ -61,6 +64,10 @@ function getActionValue(actions: MetaAction[] | undefined, type: string): number
   if (!actions) return 0
   const found = actions.find((a) => a.action_type === type)
   return found ? parseFloat(found.value) || 0 : 0
+}
+
+function hasActions(actions: MetaAction[] | undefined): boolean {
+  return Array.isArray(actions) && actions.length > 0
 }
 
 function sumActionValues(actions: MetaAction[] | undefined, types: string[]): number {
@@ -83,11 +90,17 @@ function normalizeAggregate(rows: MetaDayInsight[]): Omit<NormalizedMetrics, 'de
   let clicks = 0
   let inlineLinkClicks = 0
   let videoPlayActions = 0
+  let video3s = 0
+  let thruPlays = 0
   let videoP25 = 0
   let videoP50 = 0
   let videoP75 = 0
   let videoP95 = 0
   let videoAvgTimeWeighted = 0
+  let avgTimePlays = 0
+  // Si Meta no manda el campo en ninguna fila, el dato es "sin dato" (null).
+  let hasRetention = false
+  let hasAvgTime = false
   let frequencySum = 0
   let frequencyCount = 0
   let purchases = 0
@@ -98,24 +111,29 @@ function normalizeAggregate(rows: MetaDayInsight[]): Omit<NormalizedMetrics, 'de
     impressions += parseInt(day.impressions, 10) || 0
     clicks += parseInt(day.clicks, 10) || 0
     inlineLinkClicks += parseInt(day.inline_link_clicks, 10) || 0
-    const directPlays = parseInt(day.video_play_actions || '0', 10) || 0
-    const p25 = getActionValue(day.video_p25_watched_actions, 'video_view')
-    const p50 = getActionValue(day.video_p50_watched_actions, 'video_view')
-    const p75 = getActionValue(day.video_p75_watched_actions, 'video_view')
-    const p95 = getActionValue(day.video_p95_watched_actions, 'video_view')
-    // Bug conocido: Meta a veces devuelve video_play_actions=0 aunque el video
-    // sí se reprodujo (lo cuenta bajo "video_view" en p25_watched_actions).
-    // Fallback: usar el mayor entre video_play_actions y video_p25_watched.
-    // Quien vio el 25% del video, forzosamente lo reprodujo.
-    const dayPlays = Math.max(directPlays, p25)
+    const dayPlays = getActionValue(day.video_play_actions, 'video_view')
     videoPlayActions += dayPlays
-    videoP25 += p25
-    videoP50 += p50
-    videoP75 += p75
-    videoP95 += p95
+    // Reproducciones de 3s: Meta las reporta en actions como 'video_view'.
+    video3s += getActionValue(day.actions, 'video_view')
+    thruPlays += getActionValue(day.video_thruplay_watched_actions, 'video_view')
 
-    const avgTime = getActionValue(day.video_avg_time_watched_actions, 'video_view')
-    if (avgTime > 0) videoAvgTimeWeighted += avgTime
+    // Una lista vacia ([]) tampoco es dato: se trata igual que un campo ausente.
+    if (hasActions(day.video_p25_watched_actions) || hasActions(day.video_p50_watched_actions) ||
+        hasActions(day.video_p75_watched_actions) || hasActions(day.video_p95_watched_actions)) {
+      hasRetention = true
+    }
+    videoP25 += getActionValue(day.video_p25_watched_actions, 'video_view')
+    videoP50 += getActionValue(day.video_p50_watched_actions, 'video_view')
+    videoP75 += getActionValue(day.video_p75_watched_actions, 'video_view')
+    videoP95 += getActionValue(day.video_p95_watched_actions, 'video_view')
+
+    if (hasActions(day.video_avg_time_watched_actions)) {
+      hasAvgTime = true
+      // Promedio ponderado por reproducciones del dia.
+      const avgTime = getActionValue(day.video_avg_time_watched_actions, 'video_view')
+      videoAvgTimeWeighted += avgTime * dayPlays
+      avgTimePlays += dayPlays
+    }
 
     frequencySum += parseFloat(day.frequency) || 0
     frequencyCount++
@@ -125,7 +143,9 @@ function normalizeAggregate(rows: MetaDayInsight[]): Omit<NormalizedMetrics, 'de
   }
 
   const frequency = frequencyCount > 0 ? frequencySum / frequencyCount : 0
-  const avgWatchTime = videoPlayActions > 0 ? videoAvgTimeWeighted / rows.length : 0
+  const avgWatchTime = hasAvgTime && avgTimePlays > 0 ? videoAvgTimeWeighted / avgTimePlays : null
+  const retentionPct = (watched: number) =>
+    hasRetention && videoPlayActions > 0 ? (watched / videoPlayActions) * 100 : null
 
   // Ticket promedio real del creativo (revenue total / purchases total).
   // Si no hay compras, ticket = 0 (y el ROAS diario también será 0).
@@ -161,16 +181,16 @@ function normalizeAggregate(rows: MetaDayInsight[]): Omit<NormalizedMetrics, 'de
     clicks,
     linkClicks: inlineLinkClicks || clicks,
     videoPlays: videoPlayActions,
-    hookViews: videoP25,
-    holdViews: videoP50,
+    hookViews: video3s,
+    holdViews: thruPlays,
     purchases,
     revenue,
     avgWatchTime,
     frequency,
-    retention25: videoPlayActions > 0 ? (videoP25 / videoPlayActions) * 100 : 0,
-    retention50: videoPlayActions > 0 ? (videoP50 / videoPlayActions) * 100 : 0,
-    retention75: videoPlayActions > 0 ? (videoP75 / videoPlayActions) * 100 : 0,
-    retention95: videoPlayActions > 0 ? (videoP95 / videoPlayActions) * 100 : 0,
+    retention25: retentionPct(videoP25),
+    retention50: retentionPct(videoP50),
+    retention75: retentionPct(videoP75),
+    retention95: retentionPct(videoP95),
     history,
     rawRowsForHistory: rows,
   }
@@ -316,6 +336,7 @@ const handler: Handler = async (event: HandlerEvent) => {
     'action_values',
     'cost_per_action_type',
     'video_play_actions',
+    'video_thruplay_watched_actions',
     'video_p25_watched_actions',
     'video_p50_watched_actions',
     'video_p75_watched_actions',
@@ -485,4 +506,4 @@ async function getVideoInfo(adId: string, accessToken: string): Promise<{
   return result
 }
 
-export { handler }
+export { handler, normalizeAggregate }

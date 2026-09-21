@@ -7,6 +7,7 @@ import {
   detectFatigue,
   detectTrendingUp,
   scoreCreative,
+  buildDiagnosis,
   getBenchmark,
   invalidateBenchmarkCache,
   DEFAULT_BENCHMARKS,
@@ -26,8 +27,8 @@ function makeCreative(overrides: Partial<Creative> = {}): Creative {
       clicks: 200,
       linkClicks: 180,
       videoPlays: 5000,
-      hookViews: 1500,
-      holdViews: 800,
+      hookViews: 3000, // reproducciones de 3s
+      holdViews: 1600, // ThruPlays
       purchases: 8,
       revenue: 240,
       avgWatchTime: 6.5,
@@ -49,8 +50,8 @@ describe('computeDerivedMetrics', () => {
     const c = makeCreative()
     const d = computeDerivedMetrics(c)
     expect(d.ctr).toBeCloseTo(1.8, 1) // 180/10000*100
-    expect(d.hookRate).toBeCloseTo(30, 1) // 1500/5000*100
-    expect(d.holdRate).toBeCloseTo(16, 1) // 800/5000*100
+    expect(d.hookRate).toBeCloseTo(30, 1) // 3000/10000*100 (sobre impresiones)
+    expect(d.holdRate).toBeCloseTo(16, 1) // 1600/10000*100 (sobre impresiones)
     expect(d.cpc).toBeCloseTo(0.556, 2) // 100/180
     expect(d.cpm).toBeCloseTo(10, 1) // 100/10000*1000
     expect(d.cpa).toBeCloseTo(12.5, 1) // 100/8
@@ -84,13 +85,39 @@ describe('computeDerivedMetrics', () => {
     expect(isFinite(d.cpa)).toBe(true)
   })
 
-  it('maneja videoPlays=0 (hook/hold rate = 0)', () => {
+  it('maneja impressions=0 en hook/hold rate (= 0, sin dividir por cero)', () => {
     const c = makeCreative({
-      metrics: { ...makeCreative().metrics, videoPlays: 0, hookViews: 0, holdViews: 0 },
+      metrics: { ...makeCreative().metrics, impressions: 0 },
     })
     const d = computeDerivedMetrics(c)
     expect(d.hookRate).toBe(0)
     expect(d.holdRate).toBe(0)
+  })
+
+  it('calcula hook/hold sobre impresiones, no sobre videoPlays', () => {
+    // Regresion: antes hook = p25 / max(plays, p25) daba 100% siempre que
+    // Meta reportaba plays en 0. videoPlays ya no participa en la formula.
+    const base = makeCreative().metrics
+    const conPlays = computeDerivedMetrics(makeCreative({ metrics: { ...base, videoPlays: 5000 } }))
+    const sinPlays = computeDerivedMetrics(makeCreative({ metrics: { ...base, videoPlays: 0 } }))
+    expect(sinPlays.hookRate).toBeCloseTo(30, 1)
+    expect(sinPlays.hookRate).toBe(conPlays.hookRate)
+    expect(sinPlays.holdRate).toBe(conPlays.holdRate)
+  })
+
+  it('caso real Anuncio 2: hook 49% y hold 19%, no 100% y 69%', () => {
+    const c = makeCreative({
+      metrics: {
+        ...makeCreative().metrics,
+        impressions: 16916,
+        videoPlays: 13844,
+        hookViews: 8334,
+        holdViews: 3289,
+      },
+    })
+    const d = computeDerivedMetrics(c)
+    expect(d.hookRate).toBeCloseTo(49.3, 1)
+    expect(d.holdRate).toBeCloseTo(19.4, 1)
   })
 })
 
@@ -353,5 +380,39 @@ describe('scoreCreative (integración)', () => {
     const s = scoreCreative(c)
     expect(s.confidence).toBe('baja')
     expect(s.category).not.toBe('ganador') // puede ser bueno o potencial, pero nunca ganador
+  })
+})
+
+describe('métricas sin dato (null)', () => {
+  // Creativo con buen hook (>= target 30) y hold > 0: condiciones para la nota
+  // de "pierde tensión a mitad del video".
+  const conHook = (retention95: number | null) =>
+    makeCreative({
+      metrics: { ...makeCreative().metrics, hookViews: 4000, retention95 },
+    })
+
+  it('retention95 bajo dispara la nota de pérdida de tensión', () => {
+    const notes = buildDiagnosis(conHook(8), BERRINCHES, false, undefined, false, undefined, 'regular')
+    expect(notes.some((n) => n.includes('pierde tensión'))).toBe(true)
+  })
+
+  it('retention95 null NO se trata como 0: no dispara la nota', () => {
+    const notes = buildDiagnosis(conHook(null), BERRINCHES, false, undefined, false, undefined, 'regular')
+    expect(notes.some((n) => n.includes('pierde tensión'))).toBe(false)
+  })
+
+  it('scoreCreative funciona con avgWatchTime y retención en null', () => {
+    const c = makeCreative({
+      metrics: {
+        ...makeCreative().metrics,
+        avgWatchTime: null,
+        retention25: null,
+        retention50: null,
+        retention75: null,
+        retention95: null,
+      },
+    })
+    const s = scoreCreative(c)
+    expect(Number.isFinite(s.composite)).toBe(true)
   })
 })

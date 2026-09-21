@@ -48,12 +48,13 @@ interface AnalysisRequest {
     holdViews: number
     purchases: number
     revenue: number
-    avgWatchTime: number
+    // null = sin dato (Meta no lo devolvio). No es lo mismo que 0.
+    avgWatchTime: number | null
     frequency: number
-    retention25: number
-    retention50: number
-    retention75: number
-    retention95: number
+    retention25: number | null
+    retention50: number | null
+    retention75: number | null
+    retention95: number | null
   }
   forceReanalyze?: boolean
 }
@@ -509,7 +510,9 @@ REGLAS:
 - En analisisHook, CITA textualmente el hook (primeras frases dichas y primer texto en pantalla).
 - En riesgoCumplimiento, cita las frases EXACTAS que son problemáticas (del copy hablado, en pantalla o del anuncio).
 - Las recomendaciones deben ser accionables y específicas, no genéricas.
-- Compara las métricas reales contra los benchmarks del nicho para contextualizar.`
+- Compara las métricas reales contra los benchmarks del nicho para contextualizar.
+- Un valor null en las métricas significa "sin dato": Meta no lo reportó. NO lo interpretes como 0 ni saques conclusiones de él; menciónalo como dato faltante si es relevante.
+- hookRate = reproducciones de 3s / impresiones. holdRate = ThruPlays (15s o video completo) / impresiones. Ambos en %, en la misma base que sus objetivos del nicho.`
 
   const claudeSchema = {
     type: 'object' as const,

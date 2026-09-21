@@ -21,17 +21,19 @@ export interface RawMetrics {
   impressions: number
   clicks: number
   linkClicks: number
-  videoPlays: number
-  hookViews: number // vieron >3s
-  holdViews: number // vieron >50%
+  videoPlays: number // reproducciones iniciadas (video_play_actions)
+  hookViews: number // reproducciones de >=3s (actions[video_view])
+  holdViews: number // ThruPlays: >=15s o completo (video_thruplay_watched_actions)
   purchases: number
   revenue: number
-  avgWatchTime: number // segundos
+  // null = "sin dato": Meta no lo devolvió o el creativo no se sincronizó.
+  // Nunca usar 0 como sustituto: un 0 falso se lee como "nadie vio el video".
+  avgWatchTime: number | null // segundos
   frequency: number
-  retention25: number
-  retention50: number
-  retention75: number
-  retention95: number
+  retention25: number | null // % de reproducciones que llegaron al 25%
+  retention50: number | null
+  retention75: number | null
+  retention95: number | null
   history: DailyPoint[]
   demographics?: Demographics
 }

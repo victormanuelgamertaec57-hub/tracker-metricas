@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { Creative, Format, RawMetrics } from '../types'
-import { fetchMetaLevel, syncCreativeWithMeta, APP_SECRET, type MetaEntity, type MetaLevel } from '../lib/meta'
+import { fetchMetaLevel, syncCreativeWithMeta, APP_SECRET, type MetaEntity, type MetaLevel, type MetaSyncResult } from '../lib/meta'
 
 const NICHES = ['Berrinches', 'Método Hormonal', 'CalistenIA', 'Tai Chi']
 const FORMATS: Format[] = ['9:16', '1:1', '4:5', '16:9']
@@ -254,6 +254,10 @@ export function UploadModal({
   // Sync state
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  // Ultimo sync exitoso, con el adId al que corresponde. Aporta los datos que
+  // no se editan a mano (tiempo promedio, retencion, historial, demografia).
+  const [lastSync, setLastSync] = useState<{ adId: string; result: MetaSyncResult } | null>(null)
+  const [saving, setSaving] = useState(false)
 
   // Video upload state
   const [videoFile, setVideoFile] = useState<File | null>(null)
@@ -416,6 +420,13 @@ export function UploadModal({
 
   function onSelectAd(id: string) {
     setSelectedAdId(id)
+    // Las métricas del formulario vienen del sync de otro anuncio: se limpian
+    // para no guardar un creativo que mezcle datos de dos anuncios.
+    if (lastSync && lastSync.adId !== id) {
+      setLastSync(null)
+      fillFromMetrics(null)
+      setSyncMessage('Cambiaste de anuncio: vuelve a sincronizar con Meta.')
+    }
     if (!name) {
       const ad = ads.find((a) => a.id === id)
       if (ad) setName(ad.name)
@@ -515,16 +526,17 @@ export function UploadModal({
 
   const num = (v: string) => Number(v) || 0
 
-  function fillFromMetrics(m: RawMetrics) {
-    setSpend(String(Math.round(m.spend)))
-    setImpressions(String(m.impressions))
-    setLinkClicks(String(m.linkClicks))
-    setVideoPlays(String(m.videoPlays))
-    setHookViews(String(m.hookViews))
-    setHoldViews(String(m.holdViews))
-    setPurchases(String(m.purchases))
-    setRevenue(String(Math.round(m.revenue)))
-    setFrequency(String(m.frequency.toFixed(1)))
+  /** Llena el formulario con métricas de Meta, o lo vacía con null. */
+  function fillFromMetrics(m: RawMetrics | null) {
+    setSpend(m ? String(Math.round(m.spend)) : '')
+    setImpressions(m ? String(m.impressions) : '')
+    setLinkClicks(m ? String(m.linkClicks) : '')
+    setVideoPlays(m ? String(m.videoPlays) : '')
+    setHookViews(m ? String(m.hookViews) : '')
+    setHoldViews(m ? String(m.holdViews) : '')
+    setPurchases(m ? String(m.purchases) : '')
+    setRevenue(m ? String(Math.round(m.revenue)) : '')
+    setFrequency(m ? String(m.frequency.toFixed(1)) : '')
   }
 
   async function handleSync() {
@@ -532,8 +544,9 @@ export function UploadModal({
     setSyncing(true)
     setSyncMessage(null)
     try {
-      const { metrics } = await syncCreativeWithMeta(selectedAdId)
-      fillFromMetrics(metrics)
+      const result = await syncCreativeWithMeta(selectedAdId)
+      fillFromMetrics(result.metrics)
+      setLastSync({ adId: selectedAdId, result })
       setSyncMessage('✓ Métricas cargadas desde Meta Ads')
     } catch (err) {
       setSyncMessage(`✕ ${err instanceof Error ? err.message : 'Error al sincronizar'}`)
@@ -542,37 +555,64 @@ export function UploadModal({
     }
   }
 
-  function handleSave() {
-    if (!name.trim()) return
-    const creative: Creative = {
-      id: crypto.randomUUID(),
-      name: name.trim(),
-      niche,
-      format,
-      launchDate: new Date().toISOString().slice(0, 10),
-      metaAdId: selectedAdId || undefined,
-      videoUrl: videoUrl || undefined,
-      thumbnailUrl: thumbnailUrl || undefined,
-      metrics: {
-        spend: num(spend),
-        impressions: num(impressions),
-        clicks: num(linkClicks),
-        linkClicks: num(linkClicks),
-        videoPlays: num(videoPlays),
-        hookViews: num(hookViews),
-        holdViews: num(holdViews),
-        purchases: num(purchases),
-        revenue: num(revenue),
-        avgWatchTime: 0,
-        frequency: num(frequency),
-        retention25: 0,
-        retention50: 0,
-        retention75: 0,
-        retention95: 0,
-        history: [],
-      },
+  /**
+   * Trae de Meta los datos que el formulario no captura. Si falla, devuelve
+   * null y el creativo se guarda igual, con esos campos como "sin dato".
+   */
+  async function metaExtrasForSave(): Promise<MetaSyncResult | null> {
+    if (!selectedAdId) return null
+    if (lastSync?.adId === selectedAdId) return lastSync.result
+    try {
+      const result = await syncCreativeWithMeta(selectedAdId)
+      setLastSync({ adId: selectedAdId, result })
+      return result
+    } catch (err) {
+      console.warn('No se pudieron traer métricas de video de Meta al guardar:', err)
+      return null
     }
-    onSave(creative)
+  }
+
+  async function handleSave() {
+    if (!name.trim() || saving) return
+    setSaving(true)
+    try {
+      const extras = await metaExtrasForSave()
+      const synced = extras?.metrics
+      const creative: Creative = {
+        id: crypto.randomUUID(),
+        name: name.trim(),
+        niche,
+        format,
+        launchDate: new Date().toISOString().slice(0, 10),
+        metaAdId: selectedAdId || undefined,
+        metaAdAccountId: extras?.adAccountId,
+        videoUrl: videoUrl || undefined,
+        thumbnailUrl: thumbnailUrl || undefined,
+        metrics: {
+          spend: num(spend),
+          impressions: num(impressions),
+          clicks: num(linkClicks),
+          linkClicks: num(linkClicks),
+          videoPlays: num(videoPlays),
+          hookViews: num(hookViews),
+          holdViews: num(holdViews),
+          purchases: num(purchases),
+          revenue: num(revenue),
+          // Sin sync con Meta estos campos son "sin dato" (null), nunca 0.
+          avgWatchTime: synced?.avgWatchTime ?? null,
+          frequency: num(frequency),
+          retention25: synced?.retention25 ?? null,
+          retention50: synced?.retention50 ?? null,
+          retention75: synced?.retention75 ?? null,
+          retention95: synced?.retention95 ?? null,
+          history: synced?.history ?? [],
+          demographics: synced?.demographics,
+        },
+      }
+      onSave(creative)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -829,7 +869,7 @@ export function UploadModal({
             <Field label="Clics al link"><input value={linkClicks} onChange={(e) => setLinkClicks(e.target.value)} type="number" /></Field>
             <Field label="Reproducciones de video"><input value={videoPlays} onChange={(e) => setVideoPlays(e.target.value)} type="number" /></Field>
             <Field label="Vistas >3s (hook)"><input value={hookViews} onChange={(e) => setHookViews(e.target.value)} type="number" /></Field>
-            <Field label="Vistas >50% (hold)"><input value={holdViews} onChange={(e) => setHoldViews(e.target.value)} type="number" /></Field>
+            <Field label="ThruPlays (hold)"><input value={holdViews} onChange={(e) => setHoldViews(e.target.value)} type="number" /></Field>
             <Field label="Compras"><input value={purchases} onChange={(e) => setPurchases(e.target.value)} type="number" /></Field>
             <Field label="Ingresos ($)"><input value={revenue} onChange={(e) => setRevenue(e.target.value)} type="number" /></Field>
             <Field label="Frecuencia"><input value={frequency} onChange={(e) => setFrequency(e.target.value)} type="number" step="0.1" /></Field>
@@ -837,11 +877,12 @@ export function UploadModal({
         </div>
 
         <button
-          className="w-full mt-5 border-none py-2.5 rounded-lg font-medium cursor-pointer transition-all hover:brightness-110"
+          className="w-full mt-5 border-none py-2.5 rounded-lg font-medium cursor-pointer transition-all hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ background: 'var(--accent)', color: 'var(--accent-dark)', boxShadow: '0 0 12px var(--accent-glow)' }}
           onClick={handleSave}
+          disabled={saving || isUploading}
         >
-          Guardar creativo
+          {saving ? 'Trayendo métricas de Meta…' : 'Guardar creativo'}
         </button>
       </div>
     </div>

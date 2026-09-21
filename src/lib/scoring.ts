@@ -125,8 +125,11 @@ function inverseRatioScore(target: number, value: number) {
 export function computeDerivedMetrics(c: Creative) {
   const { metrics: m } = c
   const ctr = m.impressions > 0 ? (m.linkClicks / m.impressions) * 100 : 0
-  const hookRate = m.videoPlays > 0 ? (m.hookViews / m.videoPlays) * 100 : 0
-  const holdRate = m.videoPlays > 0 ? (m.holdViews / m.videoPlays) * 100 : 0
+  // Hook rate = reproducciones de 3s / impresiones (thumb-stop rate).
+  // Hold rate = ThruPlays / impresiones. Ambos sobre impresiones, que es la
+  // base en la que estan expresados los objetivos por nicho.
+  const hookRate = m.impressions > 0 ? (m.hookViews / m.impressions) * 100 : 0
+  const holdRate = m.impressions > 0 ? (m.holdViews / m.impressions) * 100 : 0
   const cpc = m.linkClicks > 0 ? m.spend / m.linkClicks : 0
   const cpm = m.impressions > 0 ? (m.spend / m.impressions) * 1000 : 0
   const cpa = m.purchases > 0 ? m.spend / m.purchases : 0
@@ -279,7 +282,9 @@ export function buildDiagnosis(
     notes.push(`Fatiga detectada: ${fatigueReason} Vigilar de cerca antes de meterle más presupuesto.`)
   }
 
-  if (d.holdRate > 0 && c.metrics.retention95 < 15 && d.hookRate >= benchmark.hookRateTarget) {
+  // retention95 null = sin dato: no se puede afirmar que el video pierde tensión.
+  const r95 = c.metrics.retention95
+  if (d.holdRate > 0 && r95 !== null && r95 < 15 && d.hookRate >= benchmark.hookRateTarget) {
     notes.push('Buen gancho inicial pero pierde tensión a mitad del video — revisar el guion desde el 50%.')
   }
 
