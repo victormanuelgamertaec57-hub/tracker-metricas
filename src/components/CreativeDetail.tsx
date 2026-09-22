@@ -6,6 +6,9 @@ import { classifyHealth } from '../lib/health'
 import { MetricStat } from './MetricStat'
 import { CATEGORY_LABEL, CATEGORY_STYLE } from '../lib/category'
 import { syncCreativeWithMeta, authenticateVideoUrl } from '../lib/meta'
+import { useCreativeAnalysis } from '../hooks/useCreativeAnalysis'
+import { videoAlertReasons } from '../lib/analysis'
+import { AIAnalysisPanel, AI_PANEL_ID } from './AIAnalysisPanel'
 
 const FORMAT_LABEL: Record<Creative['format'], string> = {
   '9:16': 'Reel 9:16',
@@ -37,6 +40,8 @@ export function CreativeDetail({
   const m = creative.metrics
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
+  const aiAnalysis = useCreativeAnalysis(creative)
+  const alertReasons = aiAnalysis.phase === 'done' ? videoAlertReasons(aiAnalysis.analysis) : []
 
   const canSync = !!creative.metaAdId
   const hasVideo = !!creative.videoUrl
@@ -157,6 +162,36 @@ export function CreativeDetail({
           </button>
         )}
       </div>
+
+      {alertReasons.length > 0 && (
+        <div
+          role="alert"
+          className="rounded-xl px-4 py-3 mb-4 flex items-start justify-between gap-3 flex-wrap"
+          style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.5)' }}
+        >
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold m-0 mb-0.5 flex items-center gap-2" style={{ color: 'var(--cat-apagar)' }}>
+              <i className="ti ti-alert-triangle text-[16px]" />
+              Posible video equivocado
+            </p>
+            <p className="text-[12px] m-0" style={{ color: 'var(--text-primary)' }}>
+              {alertReasons[0]}
+              {alertReasons.length > 1 ? ` (+${alertReasons.length - 1} motivo más)` : ''}
+            </p>
+          </div>
+          <button
+            className="text-[12px] bg-transparent border-none cursor-pointer underline shrink-0 hover:opacity-80"
+            style={{ color: 'var(--cat-apagar)' }}
+            onClick={() => {
+              const panel = document.getElementById(AI_PANEL_ID)
+              panel?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              panel?.focus({ preventScroll: true })
+            }}
+          >
+            Ver análisis ↓
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between flex-wrap gap-3 mb-5">
         <div>
@@ -445,6 +480,8 @@ export function CreativeDetail({
           </p>
         ))}
       </div>
+
+      <AIAnalysisPanel creative={creative} state={aiAnalysis} />
     </div>
   )
 }

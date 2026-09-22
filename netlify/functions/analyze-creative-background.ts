@@ -8,7 +8,15 @@ import {
   computeDerivedMetrics,
   computeSubScores,
 } from '../../src/lib/scoring'
-import type { Creative, NicheBenchmark } from '../../src/types'
+import type {
+  Creative,
+  NicheBenchmark,
+  GeminiPerception,
+  MetaAdCopy,
+  ClaudeAnalysis,
+  VerificacionVideo,
+  CreativeAIAnalysis,
+} from '../../src/types'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -60,74 +68,6 @@ interface AnalysisRequest {
     retention95: number | null
   }
   forceReanalyze?: boolean
-}
-
-interface GeminiPerception {
-  copyHablado: string
-  copyEnPantalla: { texto: string; segundoAproximado: number }[]
-  hookLiteral: {
-    primeraFraseDicha: string
-    primerTextoEnPantalla: string
-  }
-  escenas: string
-  formatoDetectado: 'testimonial' | 'UGC' | 'unboxing' | 'talking-head' | 'otro'
-  notasDeRitmo: string
-}
-
-interface MetaAdCopy {
-  body?: string
-  title?: string
-  linkDescription?: string
-  linkUrl?: string
-  advantagePlusBodies?: string[]
-  advantagePlusTitles?: string[]
-}
-
-interface ClaudeAnalysis {
-  coherenciaVideoCopy: {
-    coinciden: boolean
-    temaVideo: string
-    temaCopy: string
-    motivo: string
-  }
-  scoreVisual: number
-  analisisHook: string
-  analisisCopy: string
-  riesgoCumplimiento: {
-    nivel: 'bajo' | 'medio' | 'alto'
-    frasesDeRiesgo: string[]
-    motivo: string
-  }
-  razones: string[]
-  recomendaciones: string[]
-}
-
-/**
- * Comparación de la duración del video subido con la del video del anuncio en
- * Meta. Si alguna de las dos no se pudo leer, no se compara (coincide = null).
- */
-interface VerificacionVideo {
-  duracionSubidaSeg: number | null
-  duracionMetaSeg: number | null
-  diferenciaSeg: number | null
-  coincide: boolean | null
-}
-
-interface CreativeAIAnalysis {
-  status: 'processing' | 'done' | 'error'
-  creativeId: string
-  videoKey?: string
-  timestamp: string
-  // "posible video equivocado" cuando la duración o el tema no coinciden con
-  // el anuncio de Meta. null = sin alerta.
-  alertaVideo?: string | null
-  verificacionVideo?: VerificacionVideo
-  geminiPerception?: GeminiPerception
-  metaCopy?: MetaAdCopy | null
-  claudeAnalysis?: ClaudeAnalysis
-  scoreCombinado?: number
-  rulesComposite?: number
-  error?: string
 }
 
 // ---------------------------------------------------------------------------

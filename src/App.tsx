@@ -6,6 +6,7 @@ import { CreativeDetail } from './components/CreativeDetail'
 import { UploadModal } from './components/UploadModal'
 import { NicheSettings } from './components/NicheSettings'
 import { APP_SECRET } from './lib/meta'
+import { videoKeyFromUrl } from './lib/analysis'
 
 const STORAGE_KEY = 'tracker-metricas:creatives'
 
@@ -90,9 +91,7 @@ export default function App() {
     // Si tiene video, eliminarlo de Netlify Blobs
     if (creative?.videoUrl) {
       try {
-        // Extraer el key de la URL del video
-        const url = new URL(creative.videoUrl, window.location.origin)
-        const key = url.searchParams.get('key')
+        const key = videoKeyFromUrl(creative.videoUrl)
         if (key) {
           await fetch('/.netlify/functions/delete-video', {
             method: 'POST',

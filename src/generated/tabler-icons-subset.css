@@ -1,12 +1,14 @@
 /* GENERADO por scripts/build-icon-subset.mjs. No editar a mano.
    Regenerar con: npm run icons:build
-   18 de 4908 iconos de Tabler Icons. */
+   20 de 4908 iconos de Tabler Icons. */
 @font-face{font-family:"tabler-icons";font-style:normal;font-weight:400;src:url("./tabler-icons-subset.woff2") format("woff2")}
 .ti{font-family:"tabler-icons" !important;speak:none;font-style:normal;font-weight:normal;font-variant:normal;text-transform:none;line-height:1;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 .ti-alert-triangle:before{content:"\ea06"}
 .ti-arrow-left:before{content:"\ea19"}
 .ti-bulb:before{content:"\ea51"}
 .ti-chart-bar:before{content:"\ea59"}
+.ti-circle-x:before{content:"\ea6a"}
+.ti-clock-exclamation:before{content:"\f847"}
 .ti-external-link:before{content:"\ea99"}
 .ti-info-circle:before{content:"\eac5"}
 .ti-loader-2:before{content:"\f226"}

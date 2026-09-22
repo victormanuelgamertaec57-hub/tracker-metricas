@@ -41,12 +41,21 @@ migrateLegacyToken()
 export type MetaLevel = 'accounts' | 'campaigns' | 'adsets' | 'ads'
 
 /**
- * Llama a una Netlify Function. Distingue entre:
- * - 404 → la function no está desplegada
+ * Llama a una Netlify Function con el x-app-secret. Distingue entre:
+ * - 404 → la function no está desplegada (salvo `allowNotFound`, ver abajo)
  * - HTML → Vite devolvió index.html en vez de la function (falta netlify dev)
  * - 500/200 con error JSON → error de la function o de la API de Meta
  */
-async function callMetaFunction<T>(url: string, init?: RequestInit): Promise<T> {
+export async function callFunction<T>(
+  url: string,
+  init?: RequestInit,
+  opts: {
+    allowNotFound?: boolean
+    // La respuesta 200 trae un campo `error` que es dato, no fallo de la
+    // función (p. ej. un análisis guardado en estado 'error').
+    errorFieldIsData?: boolean
+  } = {}
+): Promise<T | null> {
   let response: Response
   try {
     const headers: Record<string, string> = {
@@ -65,7 +74,18 @@ async function callMetaFunction<T>(url: string, init?: RequestInit): Promise<T> 
   const text = await response.text()
   const trimmed = text.trim()
 
-  // 1. 404 primero: Netlify Dev devuelve "Function not found..." (texto plano, no JSON ni HTML)
+  // 0. Algunas funciones responden 404 { status: 'not_found' } cuando el
+  //    recurso no existe todavía (p. ej. un creativo sin análisis). Con
+  //    allowNotFound eso se devuelve como null en vez de error.
+  if (response.status === 404 && opts.allowNotFound) {
+    try {
+      if (JSON.parse(trimmed)?.status === 'not_found') return null
+    } catch {
+      // no es JSON: sigue como 404 normal (función no desplegada)
+    }
+  }
+
+  // 1. 404: Netlify Dev devuelve "Function not found..." (texto plano, no JSON ni HTML)
   if (response.status === 404) {
     throw new Error(
       `Función no desplegada (404). Verifica que el archivo exista en netlify/functions/ y que el nombre coincida con la URL.`
@@ -90,7 +110,7 @@ async function callMetaFunction<T>(url: string, init?: RequestInit): Promise<T> 
   }
 
   // 4. Errores de la function o de Meta Ads
-  if (!response.ok || json?.error) {
+  if (!response.ok || (json?.error && !opts.errorFieldIsData)) {
     const metaDetail = json?.detail ? ` — ${json.detail}` : ''
     const errorType = json?.error?.toString().includes('Meta API')
       ? 'Error de Meta Ads'
@@ -99,6 +119,11 @@ async function callMetaFunction<T>(url: string, init?: RequestInit): Promise<T> 
   }
 
   return json as T
+}
+
+/** callFunction para las funciones de Meta, que nunca devuelven "no encontrado". */
+async function callMetaFunction<T>(url: string, init?: RequestInit): Promise<T> {
+  return (await callFunction<T>(url, init)) as T
 }
 
 /**
