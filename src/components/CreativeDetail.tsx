@@ -1,14 +1,15 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Creative } from '../types'
-import { scoreCreative } from '../lib/scoring'
-import { getBenchmark } from '../lib/scoring'
+import { scoreCreative, getBenchmark } from '../lib/scoring'
 import { classifyHealth } from '../lib/health'
-import { MetricStat } from './MetricStat'
-import { CATEGORY_LABEL, CATEGORY_STYLE } from '../lib/category'
+import type { Health } from '../lib/health'
+import { CATEGORY_LABEL } from '../lib/category'
 import { syncCreativeWithMeta, authenticateVideoUrl } from '../lib/meta'
 import { useCreativeAnalysis } from '../hooks/useCreativeAnalysis'
 import { videoAlertReasons } from '../lib/analysis'
 import { AIAnalysisPanel, AI_PANEL_ID } from './AIAnalysisPanel'
+import { DetailIcon } from './DetailIcon'
+import './CreativeDetail.css'
 
 const FORMAT_LABEL: Record<Creative['format'], string> = {
   '9:16': 'Reel 9:16',
@@ -17,17 +18,133 @@ const FORMAT_LABEL: Record<Creative['format'], string> = {
   '16:9': 'Feed 16:9',
 }
 
+const FORMAT_RATIO: Record<Creative['format'], string> = {
+  '9:16': '9 / 16',
+  '1:1': '1 / 1',
+  '4:5': '4 / 5',
+  '16:9': '16 / 9',
+}
+
+const DETAIL_HEALTH_COLOR: Record<Health, string> = {
+  good: 'var(--detail-good)',
+  neutral: 'var(--detail-mid)',
+  bad: 'var(--detail-bad)',
+}
+
 function retentionHealth(pct: number, stage: 25 | 50 | 75 | 95) {
   const targets = { 25: 70, 50: 45, 75: 25, 95: 12 }
   return classifyHealth(pct, targets[stage], true, 0.15)
 }
 
-export function CreativeDetail({
-  creative,
-  onBack,
-  onSync,
-  onDelete,
-}: {
+function MetricDonut({ label, value, target, decimals }: {
+  label: string
+  value: number
+  target: number
+  decimals: number
+}) {
+  const circumference = 2 * Math.PI * 26
+  const color = DETAIL_HEALTH_COLOR[classifyHealth(value, target, true)]
+  return (
+    <div className="cd-metric cd-metric-donut">
+      <div className="cd-donut">
+        <svg width="60" height="60" viewBox="0 0 64 64" aria-hidden="true">
+          <circle cx="32" cy="32" r="26" fill="none" stroke="var(--detail-surface-2)" strokeWidth="6" />
+          <circle cx="32" cy="32" r="26" fill="none" stroke={color} strokeWidth="6" strokeLinecap="round"
+            strokeDasharray={circumference} strokeDashoffset={circumference * (1 - Math.max(0, Math.min(100, value)) / 100)} />
+        </svg>
+        <span style={{ color }}>{value.toFixed(decimals)}%</span>
+      </div>
+      <span className="cd-metric-label">{label}<br />obj. {target}%</span>
+    </div>
+  )
+}
+
+function FlatMetric({ label, value, health, noData = false, tall = false }: {
+  label: string
+  value: string
+  health?: Health
+  noData?: boolean
+  tall?: boolean
+}) {
+  return (
+    <div className={`cd-metric${tall ? ' cd-metric-tall' : ''}`}>
+      <span className="cd-metric-label">{label}</span>
+      <span className="cd-metric-value" style={{ color: noData ? 'var(--detail-text-3)' : health ? DETAIL_HEALTH_COLOR[health] : 'var(--detail-text)' }}>{value}</span>
+    </div>
+  )
+}
+
+function VideoPreview({ creative, metaAdsManagerUrl }: { creative: Creative; metaAdsManagerUrl: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [playing, setPlaying] = useState(false)
+  const [loadedDuration, setLoadedDuration] = useState<number | null>(null)
+  const hasVideo = !!creative.videoUrl
+  const videoUnavailable = creative.videoUnavailable || false
+  const duration = creative.videoDurationSec ?? loadedDuration
+
+  return (
+    <div className="cd-video-column">
+      <div className="cd-video-frame" style={{ aspectRatio: FORMAT_RATIO[creative.format] }}>
+        {hasVideo ? (
+          <>
+            <video
+              ref={videoRef}
+              className="cd-video"
+              style={{ aspectRatio: FORMAT_RATIO[creative.format] }}
+              poster={creative.thumbnailUrl || undefined}
+              controls
+              preload="metadata"
+              src={authenticateVideoUrl(creative.videoUrl || '') || undefined}
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onEnded={() => setPlaying(false)}
+              onLoadedMetadata={(event) => {
+                const seconds = event.currentTarget.duration
+                setLoadedDuration(Number.isFinite(seconds) ? seconds : null)
+              }}
+            >
+              Tu navegador no soporta la reproducción de video.
+            </video>
+            {!playing && (
+              <button type="button" className="cd-video-play" aria-label="Reproducir video"
+                onClick={() => { void videoRef.current?.play().catch(() => setPlaying(false)) }}>
+                <DetailIcon name="play" size={20} />
+              </button>
+            )}
+          </>
+        ) : (
+          <div className="cd-video-fallback">
+            {creative.thumbnailUrl ? (
+              <img src={creative.thumbnailUrl} alt={creative.name} />
+            ) : (
+              <div className="cd-video-empty">
+                <DetailIcon name="video-off" size={48} />
+                <p>Sin video disponible</p>
+              </div>
+            )}
+          </div>
+        )}
+        <span className="cd-video-chip cd-video-format">{creative.format}</span>
+        {duration != null && Number.isFinite(duration) && (
+          <span className={`cd-video-chip cd-video-duration${hasVideo ? ' cd-video-duration-controls' : ''}`}>
+            {duration.toLocaleString('es', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s
+          </span>
+        )}
+      </div>
+      {!hasVideo && (videoUnavailable || creative.metaAdId) && (
+        <div className="cd-video-unavailable">
+          {videoUnavailable && <p>El video no está disponible por permisos de Meta</p>}
+          <a href={metaAdsManagerUrl} target="_blank" rel="noopener noreferrer" className="cd-meta-link">
+            <DetailIcon name="external" size={12} />
+            Ver en Meta Ads Manager
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function CreativeDetail({ creative, onBack, onSync, onDelete }: {
   creative: Creative
   onBack: () => void
   onSync: (updated: Creative) => void
@@ -35,25 +152,19 @@ export function CreativeDetail({
 }) {
   const score = scoreCreative(creative)
   const benchmark = getBenchmark(creative.niche)
-  const style = CATEGORY_STYLE[score.category]
   const d = score.derived
   const m = creative.metrics
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
   const aiAnalysis = useCreativeAnalysis(creative)
   const alertReasons = aiAnalysis.phase === 'done' ? videoAlertReasons(aiAnalysis.analysis) : []
-
   const canSync = !!creative.metaAdId
-  const hasVideo = !!creative.videoUrl
-  const videoUnavailable = creative.videoUnavailable || false
   const metaAdAccountId = creative.metaAdAccountId
 
   async function handleSync() {
     if (!creative.metaAdId) return
-
     setSyncing(true)
     setSyncError(null)
-
     try {
       const result = await syncCreativeWithMeta(creative.metaAdId)
       const updatedCreative: Creative = {
@@ -72,415 +183,148 @@ export function CreativeDetail({
     }
   }
 
-  // Construir link a Meta Ads Manager
   const metaAdsManagerUrl = metaAdAccountId
     ? `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${metaAdAccountId}`
     : 'https://adsmanager.facebook.com/adsmanager/'
 
   return (
-    <div>
-      <div 
-        className="flex items-center justify-between mb-4 flex-wrap gap-3 pb-3"
-        style={{ borderBottom: '1px solid var(--divider-strong)' }}
-      >
-        <button
-          className="flex items-center gap-2 text-[12px] bg-transparent border-none cursor-pointer hover:opacity-80 transition-opacity"
-          style={{ color: 'var(--text-secondary)' }}
-          onClick={onBack}
-        >
-          <i className="ti ti-arrow-left text-[14px]" />
-          Volver
+    <div className="creative-detail">
+      <div className="cd-toolbar">
+        <button type="button" className="cd-back" onClick={onBack}>
+          <DetailIcon name="back" size={18} />Volver
         </button>
-
-        {canSync && (
-          <div className="flex items-center gap-2">
-            {syncError && (
-              <span className="text-[11px]" style={{ color: 'var(--cat-apagar)' }}>{syncError}</span>
-            )}
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="flex items-center gap-1.5 text-[12px] border-none rounded-md px-3 py-1.5 cursor-pointer"
-              style={{ 
-                background: 'var(--cat-potencial)',
-                color: 'white',
-              }}
-              title="Sincronizar métricas desde Meta Ads"
-            >
-              <i className={`ti ${syncing ? 'ti-loader-2 text-[14px] animate-spin' : 'ti-refresh'}`} />
+        <div className="cd-actions">
+          {canSync && syncError && <span className="cd-sync-error" role="alert">{syncError}</span>}
+          {canSync && (
+            <button type="button" onClick={handleSync} disabled={syncing} className="cd-button" title="Sincronizar métricas desde Meta Ads">
+              <DetailIcon name="refresh" size={15} className={syncing ? 'cd-spinning' : undefined} />
               {syncing ? 'Sincronizando...' : 'Sincronizar con Meta Ads'}
             </button>
-            {onDelete && (
-              <button
-                onClick={() => {
-                  if (confirm(`¿Eliminar "${creative.name}"? Esta acción no se puede deshacer.`)) {
-                    onDelete()
-                  }
-                }}
-                className="flex items-center gap-1.5 text-[12px] border-none rounded-md px-3 py-1.5 cursor-pointer transition-all"
-                style={{ 
-                  background: 'rgba(239,68,68,0.1)',
-                  color: 'var(--cat-apagar)',
-                }}
-                title="Eliminar creativo"
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(239,68,68,0.2)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(239,68,68,0.1)'
-                }}
-              >
-                <i className="ti ti-trash text-[14px]" />
-                Eliminar
-              </button>
-            )}
-          </div>
-        )}
-        
-        {!canSync && onDelete && (
-          <button
-            onClick={() => {
-              if (confirm(`¿Eliminar "${creative.name}"? Esta acción no se puede deshacer.`)) {
-                onDelete()
-              }
-            }}
-            className="flex items-center gap-1.5 text-[12px] border-none rounded-md px-3 py-1.5 cursor-pointer transition-all"
-            style={{ 
-              background: 'rgba(239,68,68,0.1)',
-              color: 'var(--cat-apagar)',
-            }}
-            title="Eliminar creativo"
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(239,68,68,0.2)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(239,68,68,0.1)'
-            }}
-          >
-            <i className="ti ti-trash text-[14px]" />
-            Eliminar
-          </button>
-        )}
+          )}
+          {onDelete && (
+            <button type="button" className="cd-button cd-button-danger" title="Eliminar creativo" onClick={() => {
+              if (confirm(`¿Eliminar "${creative.name}"? Esta acción no se puede deshacer.`)) onDelete()
+            }}>
+              <DetailIcon name="trash" size={15} />Eliminar
+            </button>
+          )}
+        </div>
       </div>
 
       {alertReasons.length > 0 && (
-        <div
-          role="alert"
-          className="rounded-xl px-4 py-3 mb-4 flex items-start justify-between gap-3 flex-wrap"
-          style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.5)' }}
-        >
-          <div className="min-w-0">
-            <p className="text-[13px] font-semibold m-0 mb-0.5 flex items-center gap-2" style={{ color: 'var(--cat-apagar)' }}>
-              <i className="ti ti-alert-triangle text-[16px]" />
-              Posible video equivocado
-            </p>
-            <p className="text-[12px] m-0" style={{ color: 'var(--text-primary)' }}>
-              {alertReasons[0]}
-              {alertReasons.length > 1 ? ` (+${alertReasons.length - 1} motivo más)` : ''}
-            </p>
+        <div role="alert" className="cd-video-alert">
+          <div className="cd-video-alert-message">
+            <DetailIcon name="warning" size={20} />
+            <div>
+              <p className="cd-alert-title">Posible video equivocado</p>
+              <p className="cd-alert-description">
+                {alertReasons[0]}{alertReasons.length > 1 ? ` (+${alertReasons.length - 1} motivo más)` : ''}
+              </p>
+            </div>
           </div>
-          <button
-            className="text-[12px] bg-transparent border-none cursor-pointer underline shrink-0 hover:opacity-80"
-            style={{ color: 'var(--cat-apagar)' }}
-            onClick={() => {
-              const panel = document.getElementById(AI_PANEL_ID)
-              panel?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-              panel?.focus({ preventScroll: true })
-            }}
-          >
-            Ver análisis ↓
-          </button>
+          <button type="button" className="cd-text-button" onClick={() => {
+            const panel = document.getElementById(AI_PANEL_ID)
+            panel?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            panel?.focus({ preventScroll: true })
+          }}>Ver detalles →</button>
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between flex-wrap gap-3 mb-5">
-        <div>
-          <p className="text-[11px] m-0 mb-0.5" style={{ color: 'var(--text-secondary)' }}>
-            Ventas generadas · {creative.niche} · {creative.name} · {FORMAT_LABEL[creative.format]}
-          </p>
-          <div 
-            className="text-[46px] font-bold leading-none tabular-nums"
-            style={{ 
-              color: 'var(--cat-ganador)',
-              textShadow: '0 0 20px rgba(34,197,94,0.3)',
-            }}
-          >
-            {m.purchases}
+      <div className="cd-summary">
+        <div className="cd-sales">
+          <p>Ventas generadas · {creative.niche} · {creative.name} · {FORMAT_LABEL[creative.format]}</p>
+          <div className="cd-sales-value">{m.purchases}</div>
+        </div>
+        <div className="cd-score-summary">
+          <span className="cd-chip">{CATEGORY_LABEL[score.category]} · Score {score.composite}</span>
+          <p>${m.revenue.toLocaleString()} ingresos · ROAS {d.roas.toFixed(1)}x · confianza {score.confidence}</p>
+        </div>
+      </div>
+
+      <div className="cd-main-grid">
+        <VideoPreview key={`${creative.id}:${creative.videoUrl ?? ''}`} creative={creative} metaAdsManagerUrl={metaAdsManagerUrl} />
+        <div className="cd-metrics-column">
+          <div className="cd-legend" aria-label="Color según desempeño">
+            <span>Color según desempeño:</span>
+            <span><i className="cd-dot cd-dot-good" />Bueno</span>
+            <span><i className="cd-dot cd-dot-mid" />Regular</span>
+            <span><i className="cd-dot cd-dot-bad" />Malo</span>
+          </div>
+          <div className="cd-metrics-grid">
+            <MetricDonut label="Hook rate" value={d.hookRate} target={benchmark.hookRateTarget} decimals={0} />
+            <MetricDonut label="Hold rate" value={d.holdRate} target={benchmark.holdRateTarget} decimals={0} />
+            <MetricDonut label="CTR" value={d.ctr} target={benchmark.ctrTarget} decimals={1} />
+            <FlatMetric label="Tiempo prom." value={m.avgWatchTime === null ? 'sin dato' : `${m.avgWatchTime.toFixed(1)}s`} noData={m.avgWatchTime === null} tall />
+          </div>
+          <div className="cd-metrics-grid">
+            <FlatMetric label="Frecuencia" value={m.frequency.toFixed(1)} health={classifyHealth(m.frequency, 2.5, false)} />
+            <FlatMetric label="CPM" value={`$${d.cpm.toFixed(2)}`} health={classifyHealth(d.cpm, 10, false)} />
+            <FlatMetric label="CPC" value={`$${d.cpc.toFixed(2)}`} health={classifyHealth(d.cpc, 0.4, false)} />
+            <FlatMetric label="CPA" value={`$${d.cpa.toFixed(2)}`} health={classifyHealth(d.cpa, benchmark.cpaTarget, false)} />
+          </div>
+          <div className="cd-retention cd-surface">
+            <p className="cd-section-label">Retención del video</p>
+            <div className="cd-retention-grid">
+              {[
+                { label: '25%', v: m.retention25, stage: 25 as const },
+                { label: '50%', v: m.retention50, stage: 50 as const },
+                { label: '75%', v: m.retention75, stage: 75 as const },
+                { label: '95%', v: m.retention95, stage: 95 as const },
+              ].map((r) => {
+                const color = r.v === null ? 'var(--detail-text-3)' : DETAIL_HEALTH_COLOR[retentionHealth(r.v, r.stage)]
+                return (
+                  <div key={r.label}>
+                    <p className="cd-retention-label">{r.label}</p>
+                    <div className="cd-retention-track">
+                      <div style={{ width: `${r.v ?? 0}%`, background: color }} />
+                    </div>
+                    <p className="cd-retention-value" style={{ color }}>{r.v === null ? 'sin dato' : `${r.v.toFixed(0)}%`}</p>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
-        <div className="text-right">
-          <span
-            className="text-[11px] px-2.5 py-1 rounded"
-            style={{ background: style.bg, color: style.text }}
-          >
-            {CATEGORY_LABEL[score.category]} · Score {score.composite}
-          </span>
-          <p className="text-[11px] mt-1.5 mb-0" style={{ color: 'var(--text-secondary)' }}>
-            ${m.revenue.toLocaleString()} ingresos · ROAS {d.roas.toFixed(1)}x · confianza {score.confidence}
-          </p>
-        </div>
       </div>
 
-      {/* Video Player Section */}
-      <div className="mb-5">
-        <p 
-          className="text-[12px] uppercase tracking-wide mb-2"
-          style={{ color: 'var(--text-secondary)' }}
-        >
-          Vista previa del creativo
-        </p>
-        
-        <div 
-          className="rounded-xl overflow-hidden relative"
-          style={{ 
-            background: 'var(--bg-surface)',
-            border: `1px solid ${style.border}`,
-            boxShadow: `0 0 18px ${style.glow}`,
-          }}
-        >
-          {hasVideo ? (
-            <>
-              <video
-                className="w-full block"
-                style={{ aspectRatio: creative.format === '9:16' ? '9/16' : creative.format === '1:1' ? '1/1' : creative.format === '4:5' ? '4/5' : '16/9' }}
-                poster={creative.thumbnailUrl || undefined}
-                controls
-                preload="metadata"
-                src={authenticateVideoUrl(creative.videoUrl || '') || undefined}
-              >
-                Tu navegador no soporta la reproducción de video.
-              </video>
-            </>
-          ) : (
-            <div 
-              className="flex flex-col items-center justify-center py-12"
-              style={{ aspectRatio: creative.format === '9:16' ? '9/16' : creative.format === '1:1' ? '1/1' : creative.format === '4:5' ? '4/5' : '16/9' }}
-            >
-              {creative.thumbnailUrl ? (
-                <img 
-                  src={creative.thumbnailUrl} 
-                  alt={creative.name}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <>
-                  <i className="ti ti-video-off text-[48px] mb-3" style={{ color: 'var(--text-muted)' }} />
-                  <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>Sin video disponible</p>
-                </>
-              )}
-              
-              {videoUnavailable && (
-                <div className="absolute bottom-0 left-0 right-0 p-3" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.8))' }}>
-                  <p className="text-[11px] mb-2" style={{ color: 'var(--text-secondary)' }}>
-                    El video no está disponible por permisos de Meta
-                  </p>
-                  <a
-                    href={metaAdsManagerUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-md transition-all"
-                    style={{ 
-                      background: 'var(--accent)',
-                      color: 'var(--accent-dark)',
-                    }}
-                  >
-                    <i className="ti ti-external-link text-[12px]" />
-                    Ver en Meta Ads Manager
-                  </a>
-                </div>
-              )}
-              
-              {!videoUnavailable && creative.metaAdId && !hasVideo && (
-                <div className="absolute bottom-0 left-0 right-0 p-3" style={{ background: 'linear-gradient(transparent, rgba(0,0,0,0.8))' }}>
-                  <a
-                    href={metaAdsManagerUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-md transition-all"
-                    style={{ 
-                      background: 'var(--accent)',
-                      color: 'var(--accent-dark)',
-                    }}
-                  >
-                    <i className="ti ti-external-link text-[12px]" />
-                    Ver en Meta Ads Manager
-                  </a>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <p 
-        className="text-[12px] uppercase tracking-wide mb-2"
-        style={{ color: 'var(--text-secondary)' }}
-      >
-        Métricas clave
-      </p>
-      <div 
-        className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 rounded-xl p-3.5 mb-5"
-        style={{ 
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--divider-soft)'
-        }}
-      >
-        <MetricStat label="CTR" value={`${d.ctr.toFixed(1)}%`} health={classifyHealth(d.ctr, benchmark.ctrTarget, true)} />
-        <MetricStat label="Hook rate" value={`${d.hookRate.toFixed(0)}%`} health={classifyHealth(d.hookRate, benchmark.hookRateTarget, true)} />
-        <MetricStat label="Hold rate" value={`${d.holdRate.toFixed(0)}%`} health={classifyHealth(d.holdRate, benchmark.holdRateTarget, true)} />
-        <MetricStat label="Tiempo prom. viendo" value={m.avgWatchTime === null ? 'sin dato' : `${m.avgWatchTime.toFixed(1)}s`} />
-        <MetricStat label="Frecuencia" value={m.frequency.toFixed(1)} health={classifyHealth(m.frequency, 2.5, false)} />
-        <MetricStat label="CPM" value={`$${d.cpm.toFixed(2)}`} health={classifyHealth(d.cpm, 10, false)} />
-        <MetricStat label="CPC" value={`$${d.cpc.toFixed(2)}`} health={classifyHealth(d.cpc, 0.4, false)} />
-        <MetricStat label="CPA" value={`$${d.cpa.toFixed(2)}`} health={classifyHealth(d.cpa, benchmark.cpaTarget, false)} />
-      </div>
-
-      <p 
-        className="text-[12px] uppercase tracking-wide mb-2"
-        style={{ color: 'var(--text-secondary)' }}
-      >
-        Retención del video
-      </p>
-      <div 
-        className="rounded-xl p-3.5 mb-5"
-        style={{ 
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--divider-soft)'
-        }}
-      >
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          {[
-            { label: '25%', v: m.retention25, stage: 25 as const },
-            { label: '50%', v: m.retention50, stage: 50 as const },
-            { label: '75%', v: m.retention75, stage: 75 as const },
-            { label: '95%', v: m.retention95, stage: 95 as const },
-          ].map((r) => {
-            // null = sin dato: se muestra vacío, no como 0%.
-            const h = r.v === null ? 'neutral' : retentionHealth(r.v, r.stage)
-            const color = h === 'good' ? 'var(--cat-ganador)' : h === 'bad' ? 'var(--cat-apagar)' : 'var(--text-primary)'
-            return (
-              <div key={r.label}>
-                <p className="text-[10px] m-0 mb-1" style={{ color: 'var(--text-secondary)' }}>{r.label}</p>
-                <div className="rounded h-1.5" style={{ background: 'var(--bg-base)' }}>
-                  <div
-                    className="h-full rounded"
-                    style={{ width: `${r.v ?? 0}%`, background: color }}
-                  />
-                </div>
-                <p className="text-[11px] m-0 mt-1" style={{ color }}>
-                  {r.v === null ? 'sin dato' : `${r.v.toFixed(0)}%`}
-                </p>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Señales de salud */}
       {(score.isFatigued || score.trendingUp) && (
-        <div className="flex gap-2 mb-5 flex-wrap">
-          {score.trendingUp && (
-            <span className="text-[11px] px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={{ background: 'rgba(95,163,107,0.15)', color: 'var(--cat-ganador)' }}>
-              <i className="ti ti-trending-up text-[13px]" />
-              Mejorando en {score.trendingMetric === 'ctr' ? 'CTR' : 'ROAS'}
-            </span>
-          )}
-          {score.isFatigued && (
-            <span className="text-[11px] px-3 py-1.5 rounded-lg flex items-center gap-1.5" style={{ background: 'rgba(201,161,95,0.15)', color: 'var(--cat-regular)' }}>
-              <i className="ti ti-alert-triangle text-[13px]" />
-              Fatiga detectada
-            </span>
-          )}
-          <span className={`text-[11px] px-3 py-1.5 rounded-lg ${
-            score.confidence === 'alta'
-              ? ''
-              : score.confidence === 'media'
-              ? ''
-              : ''
-          }`} style={
-            score.confidence === 'alta'
-              ? { background: 'rgba(95,163,107,0.1)', color: 'var(--cat-ganador)' }
-              : score.confidence === 'media'
-              ? { background: 'rgba(107,147,201,0.15)', color: 'var(--cat-potencial)' }
-              : { background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }
-          }>
-            <i className="ti ti-chart-bar text-[13px] inline mr-1" />
-            Confianza {score.confidence}
-          </span>
+        <div className="cd-health-signals">
+          {score.trendingUp && <span className="cd-chip cd-signal-good"><DetailIcon name="trend" size={13} />Mejorando en {score.trendingMetric === 'ctr' ? 'CTR' : 'ROAS'}</span>}
+          {score.isFatigued && <span className="cd-chip cd-signal-mid"><DetailIcon name="warning" size={13} />Fatiga detectada</span>}
+          <span className={`cd-chip cd-confidence-${score.confidence}`}><DetailIcon name="chart" size={13} />Confianza {score.confidence}</span>
         </div>
       )}
 
       {m.demographics && (
-        <>
-          <p 
-            className="text-[12px] uppercase tracking-wide mb-2"
-            style={{ color: 'var(--text-secondary)' }}
-          >
-            Demográficos
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-5">
-            <div 
-              className="rounded-xl p-3.5"
-              style={{ 
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--divider-soft)'
-              }}
-            >
-              <p className="text-[11px] m-0 mb-2" style={{ color: 'var(--text-secondary)' }}>Por edad</p>
+        <section className="cd-demographics">
+          <h2 className="cd-section-label">Demográficos</h2>
+          <div className="cd-demographics-grid">
+            <div className="cd-surface">
+              <p className="cd-section-label">Por edad</p>
               {m.demographics.ageBreakdown.map((a) => (
-                <div key={a.range} className="flex justify-between text-[12px] mb-1">
-                  <span style={{ color: 'var(--text-primary)' }}>{a.range}</span>
-                  <span
-                    style={{
-                      color:
-                        a.pct >= 30 ? 'var(--cat-ganador)' : a.pct <= 12 ? 'var(--cat-apagar)' : 'var(--text-primary)',
-                    }}
-                  >
-                    {a.pct}%
-                  </span>
+                <div key={a.range} className="cd-demographic-row">
+                  <span>{a.range}</span>
+                  <span style={{ color: a.pct >= 30 ? 'var(--detail-good)' : a.pct <= 12 ? 'var(--detail-bad)' : 'var(--detail-mid)' }}>{a.pct}%</span>
                 </div>
               ))}
             </div>
-            <div 
-              className="rounded-xl p-3.5"
-              style={{ 
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--divider-soft)'
-              }}
-            >
-              <p className="text-[11px] m-0 mb-2" style={{ color: 'var(--text-secondary)' }}>Por ubicación del anuncio</p>
+            <div className="cd-surface">
+              <p className="cd-section-label">Por ubicación del anuncio</p>
               {m.demographics.placementRoas.map((p) => (
-                <div key={p.placement} className="flex justify-between text-[12px] mb-1">
-                  <span style={{ color: 'var(--text-primary)' }}>{p.placement}</span>
-                  <span style={{ color: p.roas >= 2 ? 'var(--cat-ganador)' : p.roas < 1 ? 'var(--cat-apagar)' : 'var(--text-primary)' }}>
-                    ROAS {p.roas.toFixed(1)}x
-                  </span>
+                <div key={p.placement} className="cd-demographic-row">
+                  <span>{p.placement}</span>
+                  <span style={{ color: p.roas >= 2 ? 'var(--detail-good)' : p.roas < 1 ? 'var(--detail-bad)' : 'var(--detail-mid)' }}>ROAS {p.roas.toFixed(1)}x</span>
                 </div>
               ))}
             </div>
           </div>
-        </>
+        </section>
       )}
 
-      <div
-        className="rounded-r-xl p-4"
-        style={{ 
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--divider-soft)',
-          borderLeft: `3px solid ${style.text}` 
-        }}
-      >
-        <p className="text-[11px] m-0 mb-1.5 flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}>
-          <i className="ti ti-bulb text-[13px]" />
-          Análisis a fondo
-        </p>
-        {score.diagnosis.map((line, i) => (
-          <p key={i} className="text-[12px] leading-relaxed m-0 mb-2 last:mb-0" style={{ color: 'var(--text-primary)' }}>
-            {line}
-          </p>
-        ))}
+      <div className="cd-surface cd-diagnosis">
+        <p className="cd-section-label"><DetailIcon name="bulb" size={13} />Análisis a fondo</p>
+        {score.diagnosis.map((line, i) => <p key={i} className="cd-diagnosis-text">{line}</p>)}
       </div>
-
       <AIAnalysisPanel creative={creative} state={aiAnalysis} />
     </div>
   )

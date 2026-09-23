@@ -1,24 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import type { ClaudeAnalysis, Creative, CreativeAIAnalysis } from '../types'
 import type { CreativeAnalysisState } from '../hooks/useCreativeAnalysis'
 import { fmtSec, videoKeyFromUrl } from '../lib/analysis'
 import { checklistKey, loadChecklist, saveChecklist, scoreColor } from '../lib/analysisVisuals'
 import { computeDerivedMetrics, getBenchmark } from '../lib/scoring'
 import { TargetBar } from './TargetBar'
+import { DetailIcon } from './DetailIcon'
 
 export const AI_PANEL_ID = 'analisis-ia'
-
-const card = {
-  background: 'var(--bg-surface)',
-  border: '1px solid var(--divider-soft)',
-}
 
 type RiskLevel = ClaudeAnalysis['riesgoCumplimiento']['nivel']
 
 const RISK_LEVELS: { nivel: RiskLevel; label: string; color: string; bg: string }[] = [
-  { nivel: 'bajo', label: 'Bajo', color: 'var(--cat-ganador)', bg: 'rgba(34,197,94,0.15)' },
-  { nivel: 'medio', label: 'Medio', color: 'var(--cat-regular)', bg: 'rgba(245,158,11,0.15)' },
-  { nivel: 'alto', label: 'Alto', color: 'var(--cat-apagar)', bg: 'rgba(239,68,68,0.15)' },
+  { nivel: 'bajo', label: 'Bajo', color: 'var(--detail-good)', bg: 'rgba(95,191,119,0.14)' },
+  { nivel: 'medio', label: 'Medio', color: 'var(--detail-mid)', bg: 'rgba(224,164,88,0.14)' },
+  { nivel: 'alto', label: 'Alto', color: 'var(--detail-bad)', bg: 'var(--detail-bad-soft)' },
 ]
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -52,7 +49,7 @@ function ScoreRing({ label, value, sub }: { label: string; value: number | undef
   const pct = value === undefined ? 0 : Math.max(0, Math.min(100, value)) / 100
   const color = value === undefined ? 'var(--text-muted)' : scoreColor(value)
   return (
-    <div className="rounded-xl p-3.5 flex flex-col items-center text-center" style={card}>
+    <div className="ai-score-card">
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90" aria-hidden="true">
           <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--divider-strong)" strokeWidth={stroke} />
@@ -70,7 +67,7 @@ function ScoreRing({ label, value, sub }: { label: string; value: number | undef
           )}
         </svg>
         <span
-          className="absolute inset-0 flex items-center justify-center text-[26px] font-bold tabular-nums"
+          className="ai-score-value absolute inset-0 flex items-center justify-center tabular-nums"
           style={{ color }}
         >
           <span aria-hidden="true">{value ?? '—'}</span>
@@ -85,7 +82,7 @@ function ScoreRing({ label, value, sub }: { label: string; value: number | undef
 
 function DurationCard({ title, seconds }: { title: string; seconds: number | null | undefined }) {
   return (
-    <div className="rounded-lg p-3 text-center min-w-0 h-full flex flex-col justify-center" style={{ background: 'var(--bg-base)', border: '1px solid var(--divider-soft)' }}>
+    <div className="rounded-lg p-3 text-center min-w-0 h-full flex flex-col justify-center" style={{ background: 'var(--bg-base)', border: '1px solid var(--detail-border)' }}>
       <p className="text-[11px] m-0 mb-1" style={{ color: 'var(--text-secondary)' }}>{title}</p>
       <p className="text-[16px] sm:text-[20px] font-bold m-0 tabular-nums" style={{ color: seconds == null ? 'var(--text-muted)' : 'var(--text-primary)' }}>
         {seconds == null ? 'sin dato' : fmtSec(seconds)}
@@ -97,8 +94,8 @@ function DurationCard({ title, seconds }: { title: string; seconds: number | nul
 const DURATION_CHECK = {
   // coincide === null o sin verificación: no se pudo comparar, no se afirma nada.
   unknown: { glyph: '?', label: 'No se pudo comparar la duración', bg: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)' },
-  mismatch: { glyph: '✗', label: 'La duración no coincide', bg: 'rgba(239,68,68,0.2)', color: 'var(--cat-apagar)' },
-  match: { glyph: '✓', label: 'La duración coincide', bg: 'rgba(34,197,94,0.15)', color: 'var(--cat-ganador)' },
+  mismatch: { glyph: '✗', label: 'La duración no coincide', bg: 'var(--detail-bad-soft)', color: 'var(--cat-apagar)' },
+  match: { glyph: '✓', label: 'La duración coincide', bg: 'rgba(95,191,119,0.14)', color: 'var(--cat-ganador)' },
 } as const
 
 /** Aviso de "posible video equivocado": duración subida vs. Meta y tema de cada uno. */
@@ -114,11 +111,11 @@ function VideoMismatch({ a, fallbackDurationSec }: { a: CreativeAIAnalysis; fall
   return (
     <div
       role="alert"
-      className="rounded-xl p-4 mb-4"
-      style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.5)' }}
+      className="ai-mismatch"
+      style={{ background: 'var(--detail-bad-soft)', border: '1px solid rgba(226,87,76,0.35)' }}
     >
       <p className="text-[14px] font-semibold m-0 mb-3 flex items-center gap-2" style={{ color: 'var(--cat-apagar)' }}>
-        <i className="ti ti-alert-triangle text-[18px]" />
+        <DetailIcon name="warning" size={18} />
         Posible video equivocado
       </p>
       <div className="grid grid-cols-[1fr_auto_1fr] items-stretch gap-2 mb-1.5">
@@ -169,7 +166,7 @@ function MetricsVsTarget({ creative }: { creative: Creative }) {
   // Sin impresiones, las tasas salen 0 por división protegida: es "sin dato", no 0 %.
   const has = creative.metrics.impressions > 0
   return (
-    <div className="rounded-xl p-3.5 mb-4" style={card}>
+    <div className="ai-targets">
       <SectionLabel>Métricas contra objetivo · {creative.niche}</SectionLabel>
       <TargetBar label="Hook rate" value={has ? d.hookRate : null} target={b.hookRateTarget} decimals={0} />
       <TargetBar label="Hold rate" value={has ? d.holdRate : null} target={b.holdRateTarget} decimals={0} />
@@ -186,12 +183,12 @@ function RecommendationsChecklist({ creativeId, timestamp, items }: { creativeId
     saveChecklist(creativeId, timestamp, next)
   }
   return (
-    <ul className="m-0 p-0 list-none text-[12px] leading-relaxed">
+    <ul className="ai-checklist">
       {items.map((r, i) => {
         const done = checked.includes(i)
         return (
-          <li key={i} className="mb-1.5">
-            <label className="flex items-start gap-2 cursor-pointer">
+          <li key={i} className="ai-checklist-item">
+            <label className="ai-checklist-label">
               <input
                 type="checkbox"
                 className="mt-[3px] shrink-0 cursor-pointer"
@@ -210,136 +207,131 @@ function RecommendationsChecklist({ creativeId, timestamp, items }: { creativeId
   )
 }
 
+type SectionId = 'resumen' | 'hook' | 'copy' | 'riesgo' | 'reco' | 'video' | 'percepcion'
+
+function AnalysisSection({ id, title, description, icon, open, onToggle, children }: {
+  id: string
+  title: string
+  description: string
+  icon: ComponentProps<typeof DetailIcon>['name']
+  open: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <div className={`ai-accordion-item${open ? ' ai-accordion-item-open' : ''}`}>
+      <button
+        type="button"
+        className="ai-row-btn"
+        id={`${id}-trigger`}
+        aria-expanded={open}
+        aria-controls={`${id}-panel`}
+        onClick={onToggle}
+      >
+        <span className="ai-icon-chip"><DetailIcon name={icon} size={18} /></span>
+        <span className="ai-row-copy">
+          <span className="ai-row-title">{title}</span>
+          <span className="ai-row-desc">{description}</span>
+        </span>
+        <DetailIcon name="chevron" size={18} className={`ai-chevron${open ? ' ai-chevron-open' : ''}`} />
+      </button>
+      <div id={`${id}-panel`} role="region" aria-labelledby={`${id}-trigger`} className="ai-section-panel" hidden={!open}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function Result({ a, creative }: { a: CreativeAIAnalysis; creative: Creative }) {
+  const [openId, setOpenId] = useState<SectionId | null>('riesgo')
+  const instanceId = useId()
   const c = a.claudeAnalysis
   if (!c) return null
-  // Nivel desconocido: ninguno resaltado (no se presenta como riesgo bajo).
+  // Nivel desconocido: no se presenta como riesgo bajo.
   const current = RISK_LEVELS.find((l) => l.nivel === c.riesgoCumplimiento.nivel)
-  const riskAccent = current && current.nivel !== 'bajo' ? current.color : null
   const v = a.verificacionVideo
   const g = a.geminiPerception
+  const sectionProps = (id: SectionId) => ({
+    id: `${instanceId}-${id}`,
+    open: openId === id,
+    onToggle: () => setOpenId(openId === id ? null : id),
+  })
 
   return (
-    <div>
+    <div className="ai-result">
       {a.alertaVideo && <VideoMismatch a={a} fallbackDurationSec={creative.videoDurationSec} />}
-
-      <div className="grid grid-cols-2 gap-2.5 mb-4">
-        <ScoreRing label="Score visual" value={c.scoreVisual} sub="calidad del creativo" />
-        <ScoreRing label="Score combinado" value={a.scoreCombinado} sub={`reglas ${a.rulesComposite ?? '—'} + visual`} />
-      </div>
-
-      <MetricsVsTarget creative={creative} />
-
-      <div className="rounded-xl p-3.5 mb-4" style={card}>
-        <SectionLabel>Hook</SectionLabel>
-        <p className="text-[12px] leading-relaxed m-0 mb-3" style={{ color: 'var(--text-primary)' }}>{c.analisisHook}</p>
-        <SectionLabel>Copy</SectionLabel>
-        <p className="text-[12px] leading-relaxed m-0" style={{ color: 'var(--text-primary)' }}>{c.analisisCopy}</p>
-      </div>
-
-      <div className="rounded-xl p-3.5 mb-4" style={{ background: 'var(--bg-surface)', border: `1px solid ${riskAccent ?? 'var(--divider-soft)'}` }}>
-        <SectionLabel>Riesgo de cumplimiento</SectionLabel>
-        <div className="grid grid-cols-3 gap-2 mb-2.5" role="img" aria-label={`Riesgo ${current?.label.toLowerCase() ?? 'sin dato'}`}>
-          {RISK_LEVELS.map((l) => {
-            const active = l.nivel === current?.nivel
-            return (
-              <div
-                key={l.nivel}
-                className="rounded-md py-1.5 text-center text-[12px] font-semibold flex items-center justify-center gap-1.5"
-                style={
-                  active
-                    ? { background: l.bg, border: `1px solid ${l.color}`, color: l.color }
-                    : { background: 'transparent', border: '1px solid var(--divider-soft)', color: 'var(--text-muted)', opacity: 0.55 }
-                }
-              >
-                <span className="w-2 h-2 rounded-full" style={{ background: active ? l.color : 'var(--text-muted)' }} />
-                {l.label}
-              </div>
-            )
-          })}
-        </div>
-        <p className="text-[12px] leading-relaxed m-0 mb-2" style={{ color: 'var(--text-primary)' }}>{c.riesgoCumplimiento.motivo}</p>
-        {c.riesgoCumplimiento.frasesDeRiesgo.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {c.riesgoCumplimiento.frasesDeRiesgo.map((f, i) => (
-              <span
-                key={i}
-                className="rounded-full px-2.5 py-0.5 text-[11px]"
-                style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${riskAccent ?? 'var(--divider-strong)'}`, color: 'var(--text-primary)' }}
-              >
-                “{f}”
-              </span>
-            ))}
+      <div className="ai-accordion">
+        <AnalysisSection {...sectionProps('resumen')} title="Resumen" description="Scores y veredicto general" icon="chart">
+          <div className="ai-score-grid">
+            <ScoreRing label="Score visual" value={c.scoreVisual} sub="calidad del creativo" />
+            <ScoreRing label="Score combinado" value={a.scoreCombinado} sub={`reglas ${a.rulesComposite ?? '—'} + visual`} />
           </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
-        <div className="rounded-xl p-3.5" style={card}>
-          <SectionLabel>Por qué</SectionLabel>
-          <ul className="m-0 pl-5 text-[12px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
-            {c.razones.map((r, i) => (
-              <li key={i} className="mb-1.5">{r}</li>
-            ))}
+          <MetricsVsTarget creative={creative} />
+          <SectionLabel>Razones</SectionLabel>
+          <ul className="ai-reasons">
+            {c.razones.map((r, i) => <li key={i}>{r}</li>)}
           </ul>
-        </div>
-        <div className="rounded-xl p-3.5" style={card}>
-          <SectionLabel>Qué hacer</SectionLabel>
-          {/* key: al volver a analizar cambia el timestamp y el checklist se reinicia. */}
-          <RecommendationsChecklist
-            key={`${a.creativeId}:${a.timestamp}`}
-            creativeId={a.creativeId}
-            timestamp={a.timestamp}
-            items={c.recomendaciones}
-          />
-        </div>
-      </div>
+        </AnalysisSection>
 
-      <details className="rounded-xl p-3.5 mb-3" style={card}>
-        <summary className="text-[12px] cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
-          Detalles técnicos
-        </summary>
-        <div className="mt-3 text-[12px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+        <AnalysisSection {...sectionProps('hook')} title="Hook" description="Por qué engancha o no" icon="hook">
+          <p className="ai-prose">{c.analisisHook}</p>
+        </AnalysisSection>
+
+        <AnalysisSection {...sectionProps('copy')} title="Copy" description="Coherencia entre video y anuncio" icon="copy">
+          <p className="ai-prose">{c.analisisCopy}</p>
+        </AnalysisSection>
+
+        <AnalysisSection {...sectionProps('riesgo')} title="Riesgo de cumplimiento" description="Frases y nivel de riesgo" icon="warning">
+          <span className="ai-risk-level" style={{ background: current?.bg ?? 'var(--detail-surface-2)', color: current?.color ?? 'var(--detail-text-2)' }}>
+            {current ? `Nivel ${current.label.toLowerCase()}` : 'Nivel sin dato'}
+          </span>
+          {c.riesgoCumplimiento.frasesDeRiesgo.length > 0 && (
+            <div className="ai-risk-phrases">
+              {c.riesgoCumplimiento.frasesDeRiesgo.map((f, i) => <span key={i}>“{f}”</span>)}
+            </div>
+          )}
+          <p className="ai-risk-reason">{c.riesgoCumplimiento.motivo}</p>
+        </AnalysisSection>
+
+        <AnalysisSection {...sectionProps('reco')} title="Recomendaciones" description="Qué hacer con este creativo" icon="check">
+          {/* Se mantiene montado al cerrar. El timestamp reinicia el checklist tras un nuevo análisis. */}
+          <RecommendationsChecklist key={`${a.creativeId}:${a.timestamp}`} creativeId={a.creativeId} timestamp={a.timestamp} items={c.recomendaciones} />
+        </AnalysisSection>
+
+        <AnalysisSection {...sectionProps('video')} title="Verificación de video" description="Duración y tema vs. el anuncio real" icon="clock">
           <SectionLabel>Verificación de duración</SectionLabel>
-          <p className="m-0 mb-3">
+          <p className="ai-prose ai-block-gap">
             {v && v.coincide !== null && v.duracionSubidaSeg !== null && v.duracionMetaSeg !== null
               ? `Video subido ${fmtSec(v.duracionSubidaSeg)} · anuncio en Meta ${fmtSec(v.duracionMetaSeg)} · ${v.coincide ? '✓ coincide' : '✗ no coincide'} (tolerancia ±1,5 s)`
               : `No se pudo comparar (subido: ${v?.duracionSubidaSeg != null ? fmtSec(v.duracionSubidaSeg) : 'sin dato'}, Meta: ${v?.duracionMetaSeg != null ? fmtSec(v.duracionMetaSeg) : 'sin dato'}).`}
           </p>
-
           <SectionLabel>Coherencia video / copy</SectionLabel>
-          {/* Los análisis anteriores a esta verificación no traen el campo. */}
           {c.coherenciaVideoCopy ? (
-            <p className="m-0 mb-3">
+            <p className="ai-prose">
               {c.coherenciaVideoCopy.coinciden ? '✓ Coinciden' : '✗ No coinciden'} · Video: {c.coherenciaVideoCopy.temaVideo} · Copy: {c.coherenciaVideoCopy.temaCopy}
               <br />
-              <span style={{ color: 'var(--text-secondary)' }}>{c.coherenciaVideoCopy.motivo}</span>
+              <span className="ai-muted">{c.coherenciaVideoCopy.motivo}</span>
             </p>
-          ) : (
-            <p className="m-0 mb-3" style={{ color: 'var(--text-secondary)' }}>Sin dato (análisis anterior a esta verificación).</p>
-          )}
+          ) : <p className="ai-prose ai-muted">Sin dato (análisis anterior a esta verificación).</p>}
+        </AnalysisSection>
 
-          {g && (
-            <>
-              <SectionLabel>Percepción del video (Gemini)</SectionLabel>
-              <p className="m-0 mb-1"><b>Formato:</b> {g.formatoDetectado} · <b>Ritmo:</b> {g.notasDeRitmo}</p>
-              <p className="m-0 mb-1"><b>Primera frase:</b> “{g.hookLiteral.primeraFraseDicha}”</p>
-              <p className="m-0 mb-1"><b>Primer texto en pantalla:</b> “{g.hookLiteral.primerTextoEnPantalla}”</p>
-              <p className="m-0 mb-1"><b>Escenas:</b> {g.escenas}</p>
+        {g && (
+          <AnalysisSection {...sectionProps('percepcion')} title="Percepción del video" description="Formato, escenas y transcripción de Gemini" icon="film">
+            <div className="ai-perception ai-prose">
+              <p><b>Formato:</b> {g.formatoDetectado} · <b>Ritmo:</b> {g.notasDeRitmo}</p>
+              <p><b>Primera frase:</b> “{g.hookLiteral.primeraFraseDicha}”</p>
+              <p><b>Primer texto en pantalla:</b> “{g.hookLiteral.primerTextoEnPantalla}”</p>
+              <p><b>Escenas:</b> {g.escenas}</p>
               {g.copyEnPantalla.length > 0 && (
-                <ul className="m-0 mb-1 pl-5" style={{ color: 'var(--text-secondary)' }}>
-                  {g.copyEnPantalla.map((t, i) => (
-                    <li key={i}>
-                      <span className="tabular-nums">{t.segundoAproximado}s</span> · {t.texto}
-                    </li>
-                  ))}
+                <ul className="ai-transcript ai-muted">
+                  {g.copyEnPantalla.map((t, i) => <li key={i}><span className="tabular-nums">{t.segundoAproximado}s</span> · {t.texto}</li>)}
                 </ul>
               )}
-              <p className="m-0" style={{ color: 'var(--text-secondary)' }}><b>Copy hablado:</b> {g.copyHablado}</p>
-            </>
-          )}
-        </div>
-      </details>
+              <p className="ai-muted"><b>Copy hablado:</b> {g.copyHablado}</p>
+            </div>
+          </AnalysisSection>
+        )}
+      </div>
     </div>
   )
 }
@@ -351,121 +343,70 @@ export function AIAnalysisPanel({ creative, state }: { creative: Creative; state
   // Sin sync, hook/hold ya son correctos; solo faltan retención y tiempo visto.
   const needsSyncHint = !!creative.metaAdId && creative.metrics.retention25 === null
 
-  const primaryBtn =
-    'flex items-center gap-1.5 text-[12px] border-none rounded-md px-3 py-1.5 cursor-pointer transition-all hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed'
-
   return (
-    <section id={AI_PANEL_ID} tabIndex={-1} className="mt-5 scroll-mt-4 outline-none">
-      <p className="text-[12px] uppercase tracking-wide mb-2" style={{ color: 'var(--text-secondary)' }}>
-        Análisis con IA
-      </p>
+    <section id={AI_PANEL_ID} tabIndex={-1} className="ai-analysis-panel">
+      <h2 className="ai-heading">Desglose detallado</h2>
+      <p className="ai-intro">{phase === 'done' ? 'Toca una sección para expandirla' : 'Análisis del creativo con IA'}</p>
 
       {needsSyncHint && phase !== 'loading' && (
-        <p className="text-[11px] m-0 mb-2 flex items-center gap-1.5" style={{ color: 'var(--cat-regular)' }}>
-          <i className="ti ti-info-circle text-[13px]" />
-          Sincroniza para incluir retención en el análisis.
-        </p>
+        <p className="ai-sync-hint"><DetailIcon name="info" size={13} />Sincroniza para incluir retención en el análisis.</p>
       )}
 
       {phase === 'loading' && (
-        <div className="rounded-xl p-4 text-[12px]" style={{ ...card, color: 'var(--text-secondary)' }}>
-          <i className="ti ti-loader-2 animate-spin mr-1.5" />
-          Buscando análisis guardado…
+        <div className="ai-status ai-status-line" aria-live="polite">
+          <DetailIcon name="refresh" size={16} className="ai-spin" />Buscando análisis guardado…
         </div>
       )}
 
       {phase === 'idle' && (
-        <div className="rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap" style={card}>
-          <p className="text-[12px] m-0" style={{ color: 'var(--text-secondary)' }}>
-            {hasVideoKey
-              ? 'Analiza el video, el copy del anuncio y las métricas con Gemini y Claude.'
-              : 'Sube el video del anuncio a la app para poder analizarlo.'}
+        <div className="ai-status ai-idle">
+          <p className="ai-prose ai-muted">
+            {hasVideoKey ? 'Analiza el video, el copy del anuncio y las métricas con Gemini y Claude.' : 'Sube el video del anuncio a la app para poder analizarlo.'}
           </p>
-          <button
-            className={primaryBtn}
-            style={{ background: 'var(--accent)', color: 'var(--accent-dark)' }}
-            onClick={() => analyze(false)}
-            disabled={!hasVideoKey}
-          >
-            <i className="ti ti-sparkles" />
-            Analizar con IA
+          <button type="button" className="ai-button ai-button-primary" onClick={() => analyze(false)} disabled={!hasVideoKey}>
+            <DetailIcon name="sparkles" size={15} />Analizar con IA
           </button>
         </div>
       )}
 
       {(phase === 'processing' || phase === 'stalled') && (
-        <div className="rounded-xl p-4" style={card} aria-live="polite">
-          <p className="text-[13px] m-0 mb-1 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-            {phase === 'processing' ? (
-              <i className="ti ti-loader-2 animate-spin" />
-            ) : (
-              <i className="ti ti-clock-exclamation" style={{ color: 'var(--cat-regular)' }} />
-            )}
+        <div className="ai-status" aria-live="polite">
+          <p className="ai-status-title">
+            <DetailIcon name={phase === 'processing' ? 'refresh' : 'clock'} size={16} className={phase === 'processing' ? 'ai-spin' : 'ai-warning'} />
             {phase === 'processing' ? 'Analizando el creativo…' : 'Está tardando más de lo normal'}
-            {processingSince && (
-              <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>
-                <Elapsed since={processingSince} />
-              </span>
-            )}
+            {processingSince && <span className="ai-elapsed"><Elapsed since={processingSince} /></span>}
           </p>
-          <p className="text-[12px] m-0" style={{ color: 'var(--text-secondary)' }}>
-            Puede tardar hasta un par de minutos. Puedes salir del detalle y volver: el análisis sigue en el servidor.
-          </p>
+          <p className="ai-prose ai-muted">Puede tardar hasta un par de minutos. Puedes salir del detalle y volver: el análisis sigue en el servidor.</p>
           {phase === 'stalled' && (
-            <div className="flex gap-2 mt-3">
-              <button className={primaryBtn} style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }} onClick={keepWaiting}>
-                Seguir esperando
-              </button>
-              <button className={primaryBtn} style={{ background: 'var(--accent)', color: 'var(--accent-dark)' }} onClick={() => analyze(true)}>
-                <i className="ti ti-refresh" />
-                Volver a analizar
-              </button>
+            <div className="ai-actions">
+              <button type="button" className="ai-button" onClick={keepWaiting}>Seguir esperando</button>
+              <button type="button" className="ai-button ai-button-primary" onClick={() => analyze(true)}><DetailIcon name="refresh" size={15} />Volver a analizar</button>
             </div>
           )}
         </div>
       )}
 
       {phase === 'error' && (
-        <div className="rounded-xl p-4" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.35)' }} role="alert">
-          <p className="text-[13px] m-0 mb-1 flex items-center gap-2" style={{ color: 'var(--cat-apagar)' }}>
-            <i className="ti ti-circle-x" />
-            No se pudo completar el análisis
-          </p>
-          <p className="text-[12px] m-0 mb-3 break-words" style={{ color: 'var(--text-primary)' }}>{errorMessage}</p>
+        <div className="ai-status ai-error" role="alert">
+          <p className="ai-status-title"><DetailIcon name="close" size={16} />No se pudo completar el análisis</p>
+          <p className="ai-prose ai-block-gap">{errorMessage}</p>
           <button
-            className={primaryBtn}
-            style={{ background: 'var(--accent)', color: 'var(--accent-dark)' }}
+            type="button"
+            className="ai-button ai-button-primary"
             // El servidor solo sobrescribe un análisis existente con forceReanalyze.
             onClick={() => analyze(analysis !== null)}
             disabled={!hasVideoKey}
-          >
-            <i className="ti ti-refresh" />
-            Reintentar
-          </button>
+          ><DetailIcon name="refresh" size={15} />Reintentar</button>
         </div>
       )}
 
       {phase === 'done' && analysis && (
         <>
           <Result a={analysis} creative={creative} />
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              Analizado el{' '}
-              {new Date(analysis.timestamp).toLocaleString('es', {
-                day: '2-digit',
-                month: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </span>
-            <button
-              className={primaryBtn}
-              style={{ background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--divider-strong)' }}
-              onClick={() => analyze(true)}
-              disabled={busy || !hasVideoKey}
-            >
-              <i className="ti ti-refresh" />
-              Volver a analizar
+          <div className="ai-footer">
+            <span>Analizado el{' '}{new Date(analysis.timestamp).toLocaleString('es', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+            <button type="button" className="ai-button" onClick={() => analyze(true)} disabled={busy || !hasVideoKey}>
+              <DetailIcon name="refresh" size={15} />Volver a analizar
             </button>
           </div>
         </>
