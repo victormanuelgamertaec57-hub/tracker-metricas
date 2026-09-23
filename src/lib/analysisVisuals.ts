@@ -1,6 +1,6 @@
 /**
- * Helpers puros de las piezas visuales del panel de análisis de IA (barras
- * contra objetivo y checklist de recomendaciones).
+ * Helpers puros de las piezas visuales del panel de análisis de IA y del chat
+ * (barras contra objetivo, color del score y checklist de recomendaciones).
  */
 
 export interface BarScale {
@@ -11,18 +11,48 @@ export interface BarScale {
 }
 
 /**
- * Escala propia de cada barra: el tope es el doble del objetivo, así la marca
- * queda al medio y se ve de un vistazo si se está por encima o por debajo. Si
- * el valor supera ese tope, la escala crece para que la barra no se salga.
+ * Escala de una barra. Sin `scaleMax`, cada barra usa su propia escala: el
+ * tope es el doble del objetivo, así la marca queda al medio y se ve de un
+ * vistazo si se está por encima o por debajo; si el valor supera ese tope, la
+ * escala crece para que la barra no se salga. Con `scaleMax` (varias barras
+ * comparadas entre sí) todas comparten el mismo tope; ver sharedScaleMax.
  */
-export function barScale(value: number, target: number): BarScale {
+export function barScale(value: number, target: number | null, scaleMax?: number): BarScale {
   const safeValue = Math.max(0, value)
-  if (target <= 0) return { fillPct: safeValue > 0 ? 100 : 0, targetPct: 0 }
-  const max = Math.max(target * 2, safeValue * 1.1)
+  const safeTarget = target !== null && target > 0 ? target : null
+  const max =
+    scaleMax !== undefined && scaleMax > 0
+      ? scaleMax
+      : safeTarget !== null
+        ? Math.max(safeTarget * 2, safeValue * 1.1)
+        : 0
+  if (max <= 0) return { fillPct: safeValue > 0 ? 100 : 0, targetPct: 0 }
   return {
-    fillPct: (safeValue / max) * 100,
-    targetPct: (target / max) * 100,
+    fillPct: Math.min(100, (safeValue / max) * 100),
+    targetPct: safeTarget !== null ? Math.min(100, (safeTarget / max) * 100) : 0,
   }
+}
+
+/**
+ * Tope común para comparar la misma métrica entre varios creativos: si cada
+ * barra tuviera su escala, un 20 % y un 40 % se verían iguales. Misma regla
+ * que barScale (doble del objetivo o valor + 10 %), tomada sobre todas.
+ */
+export function sharedScaleMax(points: { value: number | null; target: number | null }[]): number {
+  let max = 0
+  for (const p of points) {
+    if (p.target !== null && p.target > 0) max = Math.max(max, p.target * 2)
+    if (p.value !== null && p.value > 0) max = Math.max(max, p.value * 1.1)
+  }
+  return max > 0 ? max : 1
+}
+
+/** Mismas bandas que la categoría del scoring (ganador / potencial / regular / apagar). */
+export function scoreColor(score: number): string {
+  if (score >= 80) return 'var(--cat-ganador)'
+  if (score >= 65) return 'var(--cat-potencial)'
+  if (score >= 45) return 'var(--cat-regular)'
+  return 'var(--cat-apagar)'
 }
 
 const CHECKLIST_PREFIX = 'tracker-metricas:ai-checklist:'

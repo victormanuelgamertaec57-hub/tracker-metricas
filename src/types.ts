@@ -166,3 +166,57 @@ export interface CreativeAIAnalysis {
   rulesComposite?: number
   error?: string
 }
+
+// ---------------------------------------------------------------------------
+// Chat del tracker (netlify/functions/chat.ts)
+// Compartido entre la función y la interfaz.
+// ---------------------------------------------------------------------------
+
+export type ChatMetric = 'hookRate' | 'holdRate' | 'ctr' | 'score'
+
+/**
+ * Comparación que elige Claude: qué métrica y qué creativos. Los valores y
+ * objetivos los pone la interfaz con los datos reales, así ninguna barra
+ * muestra un número inventado por el modelo.
+ */
+export interface ChatComparison {
+  metrica: ChatMetric
+  creativeIds: string[]
+}
+
+/** Resumen compacto de un creativo que el frontend manda al chat. */
+export interface ChatCreativeSummary {
+  id: string
+  nombre: string
+  nicho: string
+  categoria: Category
+  score: number
+  confianza: Confidence
+  // null = sin impresiones, no hay dato (no es 0 %).
+  hookRate: number | null
+  hookRateObjetivo: number
+  holdRate: number | null
+  holdRateObjetivo: number
+  ctr: number | null
+  ctrObjetivo: number
+  gasto: number
+  compras: number
+  roas: number
+  fatiga: boolean
+}
+
+export interface ChatTurn {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+export interface ChatRequest {
+  message: string
+  history: ChatTurn[]
+  creatives: ChatCreativeSummary[]
+}
+
+export interface ChatResponse {
+  respuesta: string
+  comparaciones: ChatComparison[]
+}

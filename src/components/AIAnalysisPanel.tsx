@@ -2,23 +2,15 @@ import { useEffect, useState } from 'react'
 import type { ClaudeAnalysis, Creative, CreativeAIAnalysis } from '../types'
 import type { CreativeAnalysisState } from '../hooks/useCreativeAnalysis'
 import { fmtSec, videoKeyFromUrl } from '../lib/analysis'
-import { barScale, checklistKey, loadChecklist, saveChecklist } from '../lib/analysisVisuals'
+import { checklistKey, loadChecklist, saveChecklist, scoreColor } from '../lib/analysisVisuals'
 import { computeDerivedMetrics, getBenchmark } from '../lib/scoring'
-import { classifyHealth } from '../lib/health'
+import { TargetBar } from './TargetBar'
 
 export const AI_PANEL_ID = 'analisis-ia'
 
 const card = {
   background: 'var(--bg-surface)',
   border: '1px solid var(--divider-soft)',
-}
-
-/** Mismas bandas que la categoría del scoring (ganador / potencial / regular / apagar). */
-function scoreColor(score: number): string {
-  if (score >= 80) return 'var(--cat-ganador)'
-  if (score >= 65) return 'var(--cat-potencial)'
-  if (score >= 45) return 'var(--cat-regular)'
-  return 'var(--cat-apagar)'
 }
 
 type RiskLevel = ClaudeAnalysis['riesgoCumplimiento']['nivel']
@@ -166,36 +158,6 @@ function VideoMismatch({ a, fallbackDurationSec }: { a: CreativeAIAnalysis; fall
       <p className="text-[12px] m-0" style={{ color: 'var(--text-secondary)' }}>
         Las métricas de este anuncio no corresponden a este video. Sube el video correcto y vuelve a analizar.
       </p>
-    </div>
-  )
-}
-
-const HEALTH_BAR_COLOR = {
-  good: 'var(--cat-ganador)',
-  neutral: 'var(--cat-regular)',
-  bad: 'var(--cat-apagar)',
-} as const
-
-function TargetBar({ label, value, target, decimals }: { label: string; value: number | null; target: number; decimals: number }) {
-  const { fillPct, targetPct } = barScale(value ?? 0, target)
-  const color = value === null ? 'var(--text-muted)' : HEALTH_BAR_COLOR[classifyHealth(value, target, true)]
-  return (
-    <div className="mb-3 last:mb-0">
-      <div className="flex items-baseline justify-between text-[12px] mb-1">
-        <span style={{ color: 'var(--text-primary)' }}>{label}</span>
-        <span className="tabular-nums">
-          <b style={{ color }}>{value === null ? 'sin dato' : `${value.toFixed(decimals)}%`}</b>
-          <span style={{ color: 'var(--text-muted)' }}> · objetivo {target.toFixed(decimals)}%</span>
-        </span>
-      </div>
-      <div className="relative h-2.5 rounded-full" style={{ background: 'var(--divider-strong)' }}>
-        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${fillPct}%`, background: color }} />
-        <div
-          className="absolute -top-1 -bottom-1 w-0.5 rounded"
-          style={{ left: `calc(${targetPct}% - 1px)`, background: 'var(--text-primary)' }}
-          title={`Objetivo del nicho: ${target.toFixed(decimals)}%`}
-        />
-      </div>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { Dashboard } from './components/Dashboard'
 import { CreativeDetail } from './components/CreativeDetail'
 import { UploadModal } from './components/UploadModal'
 import { NicheSettings } from './components/NicheSettings'
+import { ChatWidget } from './components/ChatWidget'
 import { APP_SECRET } from './lib/meta'
 import { videoKeyFromUrl } from './lib/analysis'
 
@@ -118,45 +119,50 @@ export default function App() {
     }
   }
 
-  if (view === 'settings') {
-    return <NicheSettings onClose={() => setView('dashboard')} />
-  }
-
+  // ChatWidget va fuera del condicional: si cambiara de posición en el árbol,
+  // React lo desmontaría al ir a Ajustes y se perdería la respuesta en curso.
   return (
-    <div className="min-h-screen bg-[var(--bg-base)] py-8 px-4">
-      <div className="max-w-5xl mx-auto">
-        {openCreative ? (
-          <CreativeDetail
-            creative={openCreative}
-            onBack={() => setOpenId(null)}
-            onSync={(updated) => {
-              setCreatives((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
-            }}
-            onDelete={() => handleDelete(openCreative.id)}
-          />
-        ) : (
-          <Dashboard
-            creatives={creatives}
-            onOpen={(id) => {
-              setOpenId(id)
-              setView('detail')
-            }}
-            onAddNew={() => setShowUpload(true)}
-            onOpenSettings={() => setView('settings')}
-            onDelete={handleDelete}
-          />
-        )}
-      </div>
+    <>
+      {view === 'settings' ? (
+        <NicheSettings onClose={() => setView('dashboard')} />
+      ) : (
+        <div className="min-h-screen bg-[var(--bg-base)] pt-8 pb-24 px-4">
+          <div className="max-w-5xl mx-auto">
+            {openCreative ? (
+              <CreativeDetail
+                creative={openCreative}
+                onBack={() => setOpenId(null)}
+                onSync={(updated) => {
+                  setCreatives((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+                }}
+                onDelete={() => handleDelete(openCreative.id)}
+              />
+            ) : (
+              <Dashboard
+                creatives={creatives}
+                onOpen={(id) => {
+                  setOpenId(id)
+                  setView('detail')
+                }}
+                onAddNew={() => setShowUpload(true)}
+                onOpenSettings={() => setView('settings')}
+                onDelete={handleDelete}
+              />
+            )}
+          </div>
 
-      {showUpload && (
-        <UploadModal
-          onClose={() => setShowUpload(false)}
-          onSave={(c) => {
-            setCreatives((prev) => [c, ...prev])
-            setShowUpload(false)
-          }}
-        />
+          {showUpload && (
+            <UploadModal
+              onClose={() => setShowUpload(false)}
+              onSave={(c) => {
+                setCreatives((prev) => [c, ...prev])
+                setShowUpload(false)
+              }}
+            />
+          )}
+        </div>
       )}
-    </div>
+      <ChatWidget creatives={creatives} />
+    </>
   )
 }
