@@ -95,7 +95,7 @@ export function NicheSettings({ onClose }: { onClose: () => void }) {
           <span
             className="text-[12px] px-3 py-1 rounded"
             style={{
-              background: saved ? 'rgba(95,163,107,0.2)' : 'transparent',
+              background: saved ? 'color-mix(in srgb, var(--cat-ganador) 20%, transparent)' : 'transparent',
               color: saved ? 'var(--cat-ganador)' : 'var(--text-secondary)',
             }}
           >

@@ -126,8 +126,8 @@ export default function App() {
       {view === 'settings' ? (
         <NicheSettings onClose={() => setView('dashboard')} />
       ) : (
-        <div className={openCreative ? 'creative-detail-shell' : 'min-h-screen bg-[var(--bg-base)] pt-8 pb-24 px-4'}>
-          <div className={openCreative ? 'creative-detail-container' : 'max-w-5xl mx-auto'}>
+        <div className={openCreative ? 'creative-detail-shell' : 'dashboard-shell'}>
+          <div className={openCreative ? 'creative-detail-container' : 'dashboard-container'}>
             {openCreative ? (
               <CreativeDetail
                 creative={openCreative}

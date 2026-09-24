@@ -3,12 +3,13 @@ import type { Creative } from '../types'
 import { scoreCreative, getBenchmark } from '../lib/scoring'
 import { classifyHealth } from '../lib/health'
 import type { Health } from '../lib/health'
-import { CATEGORY_LABEL } from '../lib/category'
+import { CATEGORY_LABEL, CATEGORY_STYLE } from '../lib/category'
 import { syncCreativeWithMeta, authenticateVideoUrl } from '../lib/meta'
 import { useCreativeAnalysis } from '../hooks/useCreativeAnalysis'
 import { videoAlertReasons } from '../lib/analysis'
 import { AIAnalysisPanel, AI_PANEL_ID } from './AIAnalysisPanel'
 import { DetailIcon } from './DetailIcon'
+import { useDetailEntrance } from '../hooks/useDetailEntrance'
 import './CreativeDetail.css'
 
 const FORMAT_LABEL: Record<Creative['format'], string> = {
@@ -36,11 +37,12 @@ function retentionHealth(pct: number, stage: 25 | 50 | 75 | 95) {
   return classifyHealth(pct, targets[stage], true, 0.15)
 }
 
-function MetricDonut({ label, value, target, decimals }: {
+function MetricDonut({ label, value, target, decimals, progress }: {
   label: string
   value: number
   target: number
   decimals: number
+  progress: number
 }) {
   const circumference = 2 * Math.PI * 26
   const color = DETAIL_HEALTH_COLOR[classifyHealth(value, target, true)]
@@ -50,9 +52,9 @@ function MetricDonut({ label, value, target, decimals }: {
         <svg width="60" height="60" viewBox="0 0 64 64" aria-hidden="true">
           <circle cx="32" cy="32" r="26" fill="none" stroke="var(--detail-surface-2)" strokeWidth="6" />
           <circle cx="32" cy="32" r="26" fill="none" stroke={color} strokeWidth="6" strokeLinecap="round"
-            strokeDasharray={circumference} strokeDashoffset={circumference * (1 - Math.max(0, Math.min(100, value)) / 100)} />
+            strokeDasharray={circumference} strokeDashoffset={circumference * (1 - Math.max(0, Math.min(100, value)) * progress / 100)} />
         </svg>
-        <span style={{ color }}>{value.toFixed(decimals)}%</span>
+        <span style={{ color }}>{(value * progress).toFixed(decimals)}%</span>
       </div>
       <span className="cd-metric-label">{label}<br />obj. {target}%</span>
     </div>
@@ -69,7 +71,7 @@ function FlatMetric({ label, value, health, noData = false, tall = false }: {
   return (
     <div className={`cd-metric${tall ? ' cd-metric-tall' : ''}`}>
       <span className="cd-metric-label">{label}</span>
-      <span className="cd-metric-value" style={{ color: noData ? 'var(--detail-text-3)' : health ? DETAIL_HEALTH_COLOR[health] : 'var(--detail-text)' }}>{value}</span>
+      <span className="cd-metric-value" style={{ color: noData ? 'var(--detail-text-2)' : health ? DETAIL_HEALTH_COLOR[health] : 'var(--detail-text)' }}>{value}</span>
     </div>
   )
 }
@@ -150,7 +152,10 @@ export function CreativeDetail({ creative, onBack, onSync, onDelete }: {
   onSync: (updated: Creative) => void
   onDelete?: () => void
 }) {
+  const progress = useDetailEntrance(creative.id)
   const score = scoreCreative(creative)
+  const animatedScore = Math.round(score.composite * progress)
+  const scoreColor = `color-mix(in srgb, var(--detail-text-2), ${CATEGORY_STYLE[score.category].text} ${progress * 100}%)`
   const benchmark = getBenchmark(creative.niche)
   const d = score.derived
   const m = creative.metrics
@@ -224,7 +229,7 @@ export function CreativeDetail({ creative, onBack, onSync, onDelete }: {
           </div>
           <button type="button" className="cd-text-button" onClick={() => {
             const panel = document.getElementById(AI_PANEL_ID)
-            panel?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            panel?.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
             panel?.focus({ preventScroll: true })
           }}>Ver detalles →</button>
         </div>
@@ -232,12 +237,14 @@ export function CreativeDetail({ creative, onBack, onSync, onDelete }: {
 
       <div className="cd-summary">
         <div className="cd-sales">
-          <p>Ventas generadas · {creative.niche} · {creative.name} · {FORMAT_LABEL[creative.format]}</p>
-          <div className="cd-sales-value">{m.purchases}</div>
+          <p>Score · {creative.niche} · {creative.name} · {FORMAT_LABEL[creative.format]}</p>
+          {/* El número animado se oculta al lector de pantalla; el valor final va en sr-only
+              (aria-label en un div/span genérico lo ignoran NVDA/JAWS). */}
+          <div className="cd-sales-value" style={{ color: scoreColor }}><span aria-hidden="true">{animatedScore}</span><span className="sr-only">Score {score.composite} de 100</span></div>
         </div>
         <div className="cd-score-summary">
-          <span className="cd-chip">{CATEGORY_LABEL[score.category]} · Score {score.composite}</span>
-          <p>${m.revenue.toLocaleString()} ingresos · ROAS {d.roas.toFixed(1)}x · confianza {score.confidence}</p>
+          <span className="cd-chip" style={{ borderColor: scoreColor }}><i className="cd-category-dot" style={{ color: scoreColor }} aria-hidden="true" /><span aria-hidden="true">{CATEGORY_LABEL[score.category]} · Score {animatedScore}</span><span className="sr-only">Categoría {CATEGORY_LABEL[score.category]}</span></span>
+          <p>{m.purchases.toLocaleString()} ventas · ${m.revenue.toLocaleString()} ingresos · ROAS {d.roas.toFixed(1)}x · confianza {score.confidence}</p>
         </div>
       </div>
 
@@ -251,9 +258,9 @@ export function CreativeDetail({ creative, onBack, onSync, onDelete }: {
             <span><i className="cd-dot cd-dot-bad" />Malo</span>
           </div>
           <div className="cd-metrics-grid">
-            <MetricDonut label="Hook rate" value={d.hookRate} target={benchmark.hookRateTarget} decimals={0} />
-            <MetricDonut label="Hold rate" value={d.holdRate} target={benchmark.holdRateTarget} decimals={0} />
-            <MetricDonut label="CTR" value={d.ctr} target={benchmark.ctrTarget} decimals={1} />
+            <MetricDonut label="Hook rate" value={d.hookRate} target={benchmark.hookRateTarget} decimals={0} progress={progress} />
+            <MetricDonut label="Hold rate" value={d.holdRate} target={benchmark.holdRateTarget} decimals={0} progress={progress} />
+            <MetricDonut label="CTR" value={d.ctr} target={benchmark.ctrTarget} decimals={1} progress={progress} />
             <FlatMetric label="Tiempo prom." value={m.avgWatchTime === null ? 'sin dato' : `${m.avgWatchTime.toFixed(1)}s`} noData={m.avgWatchTime === null} tall />
           </div>
           <div className="cd-metrics-grid">
@@ -271,7 +278,7 @@ export function CreativeDetail({ creative, onBack, onSync, onDelete }: {
                 { label: '75%', v: m.retention75, stage: 75 as const },
                 { label: '95%', v: m.retention95, stage: 95 as const },
               ].map((r) => {
-                const color = r.v === null ? 'var(--detail-text-3)' : DETAIL_HEALTH_COLOR[retentionHealth(r.v, r.stage)]
+                const color = r.v === null ? 'var(--detail-text-2)' : DETAIL_HEALTH_COLOR[retentionHealth(r.v, r.stage)]
                 return (
                   <div key={r.label}>
                     <p className="cd-retention-label">{r.label}</p>

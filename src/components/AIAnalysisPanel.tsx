@@ -112,7 +112,6 @@ function VideoMismatch({ a, fallbackDurationSec }: { a: CreativeAIAnalysis; fall
     <div
       role="alert"
       className="ai-mismatch"
-      style={{ background: 'var(--detail-bad-soft)', border: '1px solid rgba(226,87,76,0.35)' }}
     >
       <p className="text-[14px] font-semibold m-0 mb-3 flex items-center gap-2" style={{ color: 'var(--cat-apagar)' }}>
         <DetailIcon name="warning" size={18} />

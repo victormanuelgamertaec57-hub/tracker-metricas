@@ -15,13 +15,25 @@
    ================================================ */
 
 :root {
-  /* Base palette */
-  --bg-base: #000000;
-  --bg-surface: #0A0A0C;
-  --bg-thumb: #050506;
-  --text-primary: #FFFFFF;
-  --text-secondary: #9CA3AF;
-  --text-muted: #6B7280;
+  /* Shared neutral palette from the approved command-center references. */
+  --ui-bg: #050505;
+  --ui-surface: #161616;
+  --ui-surface-2: #1C1C1C;
+  --ui-border: #2A2A2A;
+  --ui-text: #F2F2F2;
+  --ui-text-2: #9A9A9A;
+  --ui-text-3: #6B6B6B;
+
+  /* Base palette: alias de la paleta neutra, así chat, ajustes y modal
+     siguen el mismo tema que el dashboard sin tocar cada componente. */
+  --bg-base: var(--ui-bg);
+  --bg-surface: var(--ui-surface);
+  --bg-thumb: var(--ui-bg);
+  --text-primary: var(--ui-text);
+  --text-secondary: var(--ui-text-2);
+  /* ui-text-2, igual que en el detalle: ui-text-3 (#6B6B6B) queda bajo 4.5:1 sobre
+     las superficies nuevas y el texto muted es chico (10-11px). */
+  --text-muted: var(--ui-text-2);
   
   /* Dividers */
   --divider-strong: rgba(255,255,255,0.1);

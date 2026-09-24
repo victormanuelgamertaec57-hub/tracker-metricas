@@ -1,9 +1,10 @@
 import { Suspense, lazy, useMemo, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import type { Category, Creative } from '../types'
 import { scoreCreative } from '../lib/scoring'
 import { CreativeCard } from './CreativeCard'
-import { CATEGORY_LABEL } from '../lib/category'
+import './Dashboard.css'
+import { CATEGORY_LABEL, CATEGORY_STYLE } from '../lib/category'
 
 // Lazy load the 3D header
 const Header3D = lazy(() => import('./Header3D'))
@@ -35,6 +36,7 @@ export function Dashboard({
   onOpenSettings: () => void
   onDelete?: (id: string) => void
 }) {
+  const reducedMotion = useReducedMotion()
   const [nicheFilter, setNicheFilter] = useState('todos')
   const [categoryFilter, setCategoryFilter] = useState('todos')
 
@@ -63,219 +65,56 @@ export function Dashboard({
   const regular = scored.filter((s) => s.score.category === 'regular').length
 
   return (
-    <div>
-      {/* Header bar */}
-      <div 
-        className="flex items-center justify-between mb-6 pb-4"
-        style={{ borderBottom: '1px solid var(--divider-soft)' }}
-      >
-        <div className="flex items-center gap-3">
-          <Suspense fallback={<Header3DSkeleton />}>
-            <Header3D />
-          </Suspense>
-          <div className="flex items-center gap-2">
-            {/* Glowing dot */}
-            <span 
-              className="w-2 h-2 rounded-full"
-              style={{ 
-                background: 'var(--accent)',
-                boxShadow: '0 0 8px var(--accent)',
-              }}
-            />
-            <div>
-              <h1 
-                className="text-[16px] font-bold m-0 tracking-tight"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                RESET VAGAL
-              </h1>
-              <p 
-                className="text-[11px] m-0 mt-0.5"
-                style={{ 
-                  color: 'var(--accent)',
-                  letterSpacing: '0.05em',
-                }}
-              >
-                CREATIVE OS
-              </p>
-            </div>
+    <div className="dashboard">
+      <header className="db-header">
+        <div className="db-brand">
+          <Suspense fallback={<Header3DSkeleton />}><Header3D /></Suspense>
+          <div>
+            <h1>TRACKER-MÉTRICAS<span className="db-brand-dot" /></h1>
+            <p>CREATIVE OS</p>
           </div>
         </div>
-        
-        <div className="flex gap-2 flex-wrap sm:flex-nowrap">
-          <select 
-            value={nicheFilter} 
-            onChange={(e) => setNicheFilter(e.target.value)} 
-            className="text-[12px] min-w-[120px]"
-          >
+        <div className="db-controls">
+          <select aria-label="Filtrar por nicho" value={nicheFilter} onChange={(e) => setNicheFilter(e.target.value)}>
             <option value="todos">Todos</option>
-            {niches.map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
+            {niches.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
-          
-          <select 
-            value={categoryFilter} 
-            onChange={(e) => setCategoryFilter(e.target.value)} 
-            className="text-[12px] min-w-[120px]"
-          >
+          <select aria-label="Filtrar por categoría" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
             <option value="todos">Todos</option>
-            {(Object.keys(CATEGORY_LABEL) as Category[]).map((c) => (
-              <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
-            ))}
+            {(Object.keys(CATEGORY_LABEL) as Category[]).map((c) => <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>)}
           </select>
-          
-          <button
-            onClick={onOpenSettings}
-            className="flex items-center gap-1.5 text-[12px] cursor-pointer transition-colors"
-            style={{
-              background: 'var(--bg-surface)',
-              border: '1px solid var(--divider-soft)',
-              color: 'var(--text-secondary)',
-              borderRadius: '6px',
-              padding: '6px 10px',
-            }}
-          >
-            <i className="ti ti-settings text-[14px]" />
-            <span className="hidden sm:inline">Ajustes</span>
+          <button className="db-button" onClick={onOpenSettings}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09c.36.16.68.4.95.7" /></svg>
+            Ajustes
           </button>
-          
-          <button
-            className="flex items-center gap-1.5 text-[12px] font-medium cursor-pointer transition-all"
-            style={{
-              background: 'var(--accent)',
-              color: 'var(--accent-dark)',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '6px 12px',
-              boxShadow: '0 0 12px var(--accent-glow)',
-            }}
-            onClick={onAddNew}
-          >
-            <i className="ti ti-plus text-[14px]" />
-            Nuevo
-          </button>
+          <button className="db-button db-button-primary" onClick={onAddNew}>+ Nuevo</button>
         </div>
+      </header>
+      <div className="db-summary">
+        <SummaryCard label="Score prom." value={`${avgScore}`} suffix="/100" color="var(--ui-text)" />
+        <SummaryCard label="Ganadores" value={`${winners}`} color={CATEGORY_STYLE.ganador.text} />
+        <SummaryCard label="Potencial" value={`${watching}`} color={CATEGORY_STYLE.potencial.text} />
+        <SummaryCard label="Regular" value={`${regular}`} color={CATEGORY_STYLE.regular.text} />
+        <SummaryCard label="Apagar" value={`${toKill}`} color={CATEGORY_STYLE.malo.text} />
       </div>
-
-      {/* Summary cards */}
-      <div 
-        className="grid grid-cols-3 sm:grid-cols-5 gap-2 mb-6"
-        style={{
-          padding: '16px',
-          background: 'var(--bg-surface)',
-          borderRadius: '12px',
-          border: '1px solid var(--divider-soft)'
-        }}
-      >
-        <SummaryCard 
-          label="Score prom." 
-          value={`${avgScore}`} 
-          suffix="/100" 
-          color="var(--text-primary)" 
-        />
-        <SummaryCard 
-          label="Ganadores" 
-          value={`${winners}`} 
-          color="var(--cat-ganador)" 
-          glow="var(--glow-ganador)"
-        />
-        <SummaryCard 
-          label="Potencial" 
-          value={`${watching}`} 
-          color="var(--cat-potencial)" 
-          glow="var(--glow-potencial)"
-        />
-        <SummaryCard 
-          label="Regular" 
-          value={`${regular}`} 
-          color="var(--cat-regular)" 
-          glow="var(--glow-regular)"
-        />
-        <SummaryCard 
-          label="Apagar" 
-          value={`${toKill}`} 
-          color="var(--cat-apagar)" 
-          glow="var(--glow-apagar)"
-        />
-      </div>
-
-      {/* Creative grid with layout animations */}
-      <motion.div 
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"
-        layout
-      >
+      <motion.div className="db-grid" layout={!reducedMotion}>
         <AnimatePresence mode="popLayout">
-          {filtered.map(({ creative }) => (
-            <CreativeCard key={creative.id} creative={creative} onOpen={onOpen} onDelete={onDelete} />
-          ))}
+          {filtered.map(({ creative }) => <CreativeCard key={creative.id} creative={creative} onOpen={onOpen} onDelete={onDelete} />)}
         </AnimatePresence>
-        
-        <motion.button
-          layout
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="flex flex-col items-center justify-center gap-2 cursor-pointer min-h-[200px]"
-          style={{
-            background: 'var(--bg-surface)',
-            border: '1px dashed var(--divider-strong)',
-            borderRadius: '12px',
-            color: 'var(--text-secondary)',
-          }}
-          onClick={onAddNew}
-        >
-          <div 
-            className="w-12 h-12 rounded-full flex items-center justify-center"
-            style={{ background: 'var(--bg-base)' }}
-          >
-            <i className="ti ti-upload text-[20px]" />
-          </div>
-          <span className="text-[12px]">Subir creativo</span>
+        <motion.button layout={!reducedMotion} initial={reducedMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }} exit={reducedMotion ? undefined : { opacity: 0 }} transition={{ duration: reducedMotion ? 0 : 0.3 }} className="db-upload" onClick={onAddNew}>
+          <span className="db-upload-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12m0-12l4 4m-4-4l-4 4" /><path d="M20 17v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2" /></svg></span>
+          <span>Subir creativo</span>
         </motion.button>
       </motion.div>
     </div>
   )
 }
 
-function SummaryCard({
-  label,
-  value,
-  suffix,
-  color,
-  glow,
-}: {
-  label: string
-  value: string
-  suffix?: string
-  color: string
-  glow?: string
-}) {
+function SummaryCard({ label, value, suffix, color }: { label: string; value: string; suffix?: string; color: string }) {
   return (
-    <div
-      style={{
-        padding: '8px 12px',
-        borderRadius: '8px',
-        border: `1px solid ${glow ? color.replace(')', ',0.3)').replace('var(--cat', 'rgba(') : 'transparent'}`,
-        boxShadow: glow ? `0 0 12px ${glow}` : 'none',
-      }}
-    >
-      <p 
-        className="text-[10px] m-0 mb-1 uppercase tracking-wide"
-        style={{ color: 'var(--text-muted)' }}
-      >
-        {label}
-      </p>
-      <p 
-        className="text-[22px] font-bold m-0 tabular-nums"
-        style={{ 
-          color,
-          textShadow: glow ? `0 0 10px ${color}50` : 'none',
-        }}
-      >
-        {value}
-        {suffix && <span className="text-[12px] ml-0.5" style={{ color: 'var(--text-muted)' }}>{suffix}</span>}
-      </p>
+    <div>
+      <p className="db-stat-label">{label}</p>
+      <p className="db-stat-value" style={{ color }}>{value}{suffix && <span>{suffix}</span>}</p>
     </div>
   )
 }

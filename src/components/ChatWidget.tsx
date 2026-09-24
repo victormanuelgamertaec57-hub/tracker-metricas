@@ -210,7 +210,11 @@ export function ChatWidget({ creatives }: { creatives: Creative[] }) {
               <div
                 role="alert"
                 className="rounded-xl p-3 text-[12px]"
-                style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.35)', color: 'var(--text-primary)' }}
+                style={{
+                  background: 'color-mix(in srgb, var(--cat-apagar) 8%, transparent)',
+                  border: '1px solid color-mix(in srgb, var(--cat-apagar) 35%, transparent)',
+                  color: 'var(--text-primary)',
+                }}
               >
                 <p className="m-0 mb-2 flex items-start gap-1.5">
                   <i className="ti ti-circle-x mt-[2px]" style={{ color: 'var(--cat-apagar)' }} />

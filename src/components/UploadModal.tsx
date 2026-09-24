@@ -768,7 +768,7 @@ export function UploadModal({
                   onDrop={handleDrop}
                   className="flex flex-col items-center justify-center gap-2 rounded-lg cursor-pointer py-6 transition-all duration-200"
                   style={{ 
-                    background: isDragging ? 'rgba(56, 189, 248, 0.08)' : 'var(--bg-base)',
+                    background: isDragging ? 'color-mix(in srgb, var(--accent) 8%, transparent)' : 'var(--bg-base)',
                     border: isDragging ? '1px dashed var(--accent)' : '1px dashed var(--divider-strong)',
                     boxShadow: isDragging ? '0 0 16px var(--accent-glow)' : 'none',
                   }}
@@ -851,8 +851,8 @@ export function UploadModal({
               <button
                 onClick={handleSync}
                 disabled={syncing}
-                className="w-full mt-3 text-white border-none py-1.5 rounded-md text-[12px] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                style={{ background: 'var(--cat-potencial)' }}
+                className="w-full mt-3 border-none py-1.5 rounded-md text-[12px] flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                style={{ background: 'var(--cat-potencial)', color: 'var(--accent-dark)' }}
               >
                 <i className={`ti ${syncing ? 'ti-loader-2 animate-spin' : 'ti-refresh'}`} />
                 {syncing ? 'Sincronizando…' : 'Sincronizar con Meta Ads'}
@@ -931,7 +931,7 @@ function CascadeSelect({
           className="rounded-md px-2 py-1.5 text-[11px] break-words"
           style={{ 
             background: 'var(--bg-surface)', 
-            border: '1px solid rgba(196,99,107,0.3)',
+            border: '1px solid color-mix(in srgb, var(--cat-apagar) 30%, transparent)',
             color: 'var(--cat-apagar)'
           }}
         >
