@@ -2,7 +2,24 @@ import { useState, useEffect } from 'react'
 import type { Creative, Format, RawMetrics } from '../types'
 import { fetchMetaLevel, syncCreativeWithMeta, APP_SECRET, type MetaEntity, type MetaLevel, type MetaSyncResult } from '../lib/meta'
 
-const NICHES = ['Berrinches', 'Método Hormonal', 'CalistenIA', 'Tai Chi']
+const DEFAULT_NICHES = ['Berrinches', 'Método Hormonal', 'CalistenIA', 'Tai Chi']
+const NICHES_STORAGE_KEY = 'tracker-metricas:niches'
+
+function loadNiches(): string[] {
+  try {
+    const saved = localStorage.getItem(NICHES_STORAGE_KEY)
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed)) {
+        const custom = parsed.filter((item): item is string => typeof item === 'string')
+        return [...new Set([...DEFAULT_NICHES, ...custom].map((item) => item.trim()).filter(Boolean))]
+      }
+    }
+  } catch {
+    // Si el almacenamiento local falla, usamos los nichos iniciales.
+  }
+  return [...DEFAULT_NICHES]
+}
 const FORMATS: Format[] = ['9:16', '1:1', '4:5', '16:9']
 const MAX_VIDEO_SIZE_MB = 100
 const CHUNK_SIZE_MB = 4 // 4MB por chunk para caber en el límite de 6MB de Netlify
@@ -226,8 +243,16 @@ export function UploadModal({
   onSave: (c: Creative) => void
 }) {
   const [name, setName] = useState('')
-  const [niche, setNiche] = useState(NICHES[0])
+  const [niches, setNiches] = useState<string[]>(loadNiches)
+  const [niche, setNiche] = useState(() => loadNiches()[0] || DEFAULT_NICHES[0])
+  const [newNiche, setNewNiche] = useState('')
+  const [showNicheManager, setShowNicheManager] = useState(false)
   const [nicheAutoDetected, setNicheAutoDetected] = useState(false)
+
+  useEffect(() => {
+    localStorage.setItem(NICHES_STORAGE_KEY, JSON.stringify(niches))
+    if (!niches.includes(niche) && niches.length > 0) setNiche(niches[0])
+  }, [niches, niche])
   const [format, setFormat] = useState<Format>('9:16')
   const [spend, setSpend] = useState('')
   const [impressions, setImpressions] = useState('')
@@ -675,10 +700,89 @@ export function UploadModal({
                   setNicheAutoDetected(false)
                 }}
               >
-                {NICHES.map((n) => (
+                {niches.map((n) => (
                   <option key={n}>{n}</option>
                 ))}
               </select>
+              <button
+                type="button"
+                onClick={() => setShowNicheManager((open) => !open)}
+                className="mt-2 text-[10px] bg-transparent border-none cursor-pointer hover:opacity-80"
+                style={{ color: 'var(--accent)' }}
+              >
+                {showNicheManager ? 'Cerrar gestión de nichos' : '＋ Agregar o eliminar nichos'}
+              </button>
+              {showNicheManager && (
+                <div
+                  className="mt-2 rounded-lg p-3"
+                  style={{ background: 'var(--bg-base)', border: '1px solid var(--divider-soft)' }}
+                >
+                  <div className="flex gap-2">
+                    <input
+                      value={newNiche}
+                      onChange={(e) => setNewNiche(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          const value = newNiche.trim()
+                          if (!value || niches.some((item) => item.toLocaleLowerCase() === value.toLocaleLowerCase())) return
+                          setNiches((current) => [...current, value])
+                          setNiche(value)
+                          setNewNiche('')
+                          setNicheAutoDetected(false)
+                        }
+                      }}
+                      placeholder="Escribe un nicho nuevo"
+                      aria-label="Nombre del nuevo nicho"
+                      className="min-w-0 flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const value = newNiche.trim()
+                        if (!value || niches.some((item) => item.toLocaleLowerCase() === value.toLocaleLowerCase())) return
+                        setNiches((current) => [...current, value])
+                        setNiche(value)
+                        setNewNiche('')
+                        setNicheAutoDetected(false)
+                      }}
+                      className="rounded-md px-2 text-[11px] border-none cursor-pointer"
+                      style={{ background: 'var(--accent)', color: 'var(--bg-base)' }}
+                    >
+                      Agregar
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {niches.map((item) => (
+                      <span
+                        key={item}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px]"
+                        style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)' }}
+                      >
+                        {item}
+                        <button
+                          type="button"
+                          aria-label={`Eliminar nicho ${item}`}
+                          title={`Eliminar ${item}`}
+                          onClick={() => {
+                            const next = niches.filter((value) => value !== item)
+                            if (next.length === 0) return
+                            setNiches(next)
+                            if (niche === item) setNiche(next[0])
+                          }}
+                          className="bg-transparent border-none cursor-pointer px-0.5"
+                          style={{ color: 'var(--text-secondary)' }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <p className="mt-2 mb-0 text-[9px]" style={{ color: 'var(--text-secondary)' }}>
+                    Los cambios se guardan en este navegador. Eliminar un nicho no modifica anuncios ya guardados.
+                  </p>
+                </div>
+              )}
               {nicheAutoDetected && (
                 <span className="text-[10px] mt-0.5 flex items-center gap-1" style={{ color: 'var(--cat-ganador)' }}>
                   <i className="ti ti-sparkles text-[11px]" />
