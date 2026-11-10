@@ -21,7 +21,7 @@ function loadNiches(): string[] {
   return [...DEFAULT_NICHES]
 }
 const FORMATS: Format[] = ['9:16', '1:1', '4:5', '16:9']
-const MAX_VIDEO_SIZE_MB = 100
+const MAX_VIDEO_SIZE_MB = 250
 const CHUNK_SIZE_MB = 4 // 4MB por chunk para caber en el límite de 6MB de Netlify
 const MAX_RETRIES = 3
 
