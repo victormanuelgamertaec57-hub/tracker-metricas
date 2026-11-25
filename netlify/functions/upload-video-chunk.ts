@@ -188,32 +188,45 @@ const handler: Handler = async (event: HandlerEvent) => {
     // === ES EL ÚLTIMO CHUNK: Reensamblar todo ===
     console.log(`Iniciando reensamble de ${totalChunks} chunks para upload ${uploadId}`)
 
-    // Recoger todos los chunks en orden
-    const chunks: Buffer[] = []
-    for (let i = 0; i < totalChunks; i++) {
-      const key = `chunks/${uploadId}/${i}`
-      try {
-        const chunkData = await chunkStore.get(key, { type: 'arrayBuffer' })
-        if (!chunkData) {
-          throw new Error(`Chunk ${i} no encontrado`)
-        }
-        chunks.push(Buffer.from(chunkData))
-        console.log(`Chunk ${i + 1}/${totalChunks} leído`)
-      } catch (err) {
-        console.error(`Error leyendo chunk ${i}:`, err)
+    // Recoger todos los chunks en orden. Se leen en paralelo (en tandas) porque
+    // un video de 300 MB son ~75 chunks y leerlos uno a uno se come buena parte
+    // del tiempo maximo de la funcion.
+    const READ_CONCURRENCY = 8
+    const chunks: Buffer[] = new Array(totalChunks)
+    for (let base = 0; base < totalChunks; base += READ_CONCURRENCY) {
+      const indices = Array.from(
+        { length: Math.min(READ_CONCURRENCY, totalChunks - base) },
+        (_, k) => base + k
+      )
+      const results = await Promise.allSettled(
+        indices.map(async (i) => {
+          const chunkData = await chunkStore.get(`chunks/${uploadId}/${i}`, { type: 'arrayBuffer' })
+          if (!chunkData) {
+            throw new Error(`Chunk ${i} no encontrado`)
+          }
+          chunks[i] = Buffer.from(chunkData)
+        })
+      )
+      const failedIdx = results.findIndex((r) => r.status === 'rejected')
+      if (failedIdx !== -1) {
+        const missing = indices[failedIdx]
+        console.error(`Error leyendo chunk ${missing}:`, (results[failedIdx] as PromiseRejectedResult).reason)
         return {
           statusCode: 500,
           body: JSON.stringify({
             error: 'CHUNK_MISSING',
-            message: `Falta el chunk ${i}. La subida se canceló. Intenta de nuevo.`,
-            missingChunk: i,
+            message: `Falta el chunk ${missing}. La subida se canceló. Intenta de nuevo.`,
+            missingChunk: missing,
           }),
         }
       }
     }
+    console.log(`${totalChunks} chunks leídos`)
 
-    // Combinar todos los chunks
+    // Combinar todos los chunks y soltar las partes para no tener el video
+    // duplicado en memoria (300 MB x2 + copia al guardar rozaria el limite).
     const finalBuffer = Buffer.concat(chunks)
+    chunks.length = 0
     console.log(`Video reensamblado: ${finalBuffer.length} bytes`)
 
     // Guardar el video final
@@ -238,9 +251,15 @@ const handler: Handler = async (event: HandlerEvent) => {
     // por si mismo (getMetadata solo devuelve { etag, metadata }), y sin el
     // tamano no se pueden servir Range requests ni Content-Length al hacer
     // streaming.
+    // Si el Buffer ocupa todo su ArrayBuffer (lo normal en videos grandes) se
+    // pasa tal cual; slice() haria otra copia completa del video en memoria.
+    const storedArrayBuffer =
+      storedBuffer.byteOffset === 0 && storedBuffer.byteLength === storedBuffer.buffer.byteLength
+        ? storedBuffer.buffer
+        : storedBuffer.buffer.slice(storedBuffer.byteOffset, storedBuffer.byteOffset + storedBuffer.byteLength)
     await finalStore.set(
       finalKey,
-      storedBuffer.buffer.slice(storedBuffer.byteOffset, storedBuffer.byteOffset + storedBuffer.byteLength),
+      storedArrayBuffer,
       { metadata: { size: storedBuffer.length, contentType: sniffedType, filename, durationSec } }
     )
 

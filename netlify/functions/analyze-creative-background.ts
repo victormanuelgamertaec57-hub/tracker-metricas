@@ -137,7 +137,7 @@ async function uploadToGeminiFilesAPI(
     throw new Error('Gemini Files API did not return an upload URL')
   }
 
-  // Step 2: Upload the video data (timeout 120s)
+  // Step 2: Upload the video data (timeout 300s: videos de hasta 300 MB)
   // Buffer no está incluido en la interfaz BodyInit del DOM en lib.dom.d.ts, pero en
   // runtime de Node.js 18+ (undici / fetch nativo) Buffer es completamente válido
   // y soportado como cuerpo binario para streams y peticiones HTTP.
@@ -152,7 +152,7 @@ async function uploadToGeminiFilesAPI(
       },
       body: videoBuffer as unknown as BodyInit,
     },
-    120_000
+    300_000
   )
 
   if (!uploadResponse.ok) {
