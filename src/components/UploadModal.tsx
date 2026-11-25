@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { Creative, Format, RawMetrics } from '../types'
 import { fetchMetaLevel, syncCreativeWithMeta, APP_SECRET, type MetaEntity, type MetaLevel, type MetaSyncResult } from '../lib/meta'
 
@@ -43,54 +43,85 @@ type ErrorMap = Partial<Record<MetaLevel, string | null>>
 /**
  * Genera un thumbnail (data URL) desde un archivo de video
  */
+/** Tiempo maximo para generar la miniatura antes de rendirse. */
+const THUMBNAIL_TIMEOUT_MS = 8000
+
+/**
+ * Genera una miniatura (dataURL JPEG) del primer frame del video.
+ *
+ * Nunca se queda colgada: si el navegador no logra decodificar el video
+ * (p. ej. .mov HEVC en Chrome, o Safari que no dispara `loadeddata` con
+ * preload=metadata en archivos grandes) se rechaza al cumplirse el timeout.
+ * Quien la llama debe tratar el fallo como "sin miniatura", no como error de
+ * subida.
+ */
 async function generateThumbnail(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video')
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
-    
-    video.preload = 'metadata'
+    const objectUrl = URL.createObjectURL(file)
+    let settled = false
+
+    // Detener cualquier carga pendiente ANTES de revocar; si no, el elemento
+    // sigue pidiendo el blob ya revocado y la consola muestra
+    // `blob:... net::ERR_FILE_NOT_FOUND`.
+    function cleanup() {
+      clearTimeout(timer)
+      video.removeAttribute('src')
+      video.load()
+      URL.revokeObjectURL(objectUrl)
+    }
+
+    function fail(message: string) {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(new Error(message))
+    }
+
+    const timer = setTimeout(
+      () => fail('Tiempo agotado generando la miniatura'),
+      THUMBNAIL_TIMEOUT_MS
+    )
+
+    video.preload = 'auto'
     video.muted = true
     video.playsInline = true
-    
-    video.onloadeddata = () => {
-      // Seek to 0.1s para capturar el primer frame real
-      video.currentTime = 0.1
+
+    // `loadedmetadata` llega siempre (tambien en Safari); con la duracion ya
+    // conocida se salta a un frame real para que se dispare `seeked`.
+    video.onloadedmetadata = () => {
+      const duration = Number.isFinite(video.duration) ? video.duration : 0
+      video.currentTime = duration > 0 ? Math.min(0.1, duration / 2) : 0.1
     }
-    
+
     video.onseeked = () => {
-      if (!ctx) {
-        reject(new Error('No se pudo obtener contexto del canvas'))
+      if (settled) return
+      if (!ctx || !video.videoWidth || !video.videoHeight) {
+        fail('No se pudo dibujar el frame del video')
         return
       }
-      
+
       // Ajustar canvas al tamaño del video (max 640px de ancho para thumbnails)
       const maxWidth = 640
       const ratio = Math.min(1, maxWidth / video.videoWidth)
       canvas.width = video.videoWidth * ratio
       canvas.height = video.videoHeight * ratio
-      
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.7)
-      
-      cleanup()
-      resolve(dataUrl)
+
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.7)
+        settled = true
+        cleanup()
+        resolve(dataUrl)
+      } catch {
+        fail('No se pudo dibujar el frame del video')
+      }
     }
-    
-    video.onerror = () => {
-      cleanup()
-      reject(new Error('Error al cargar el video para generar thumbnail'))
-    }
-    
-    const objectUrl = URL.createObjectURL(file)
-    // Detener cualquier carga pendiente ANTES de revocar; si no, el elemento
-    // sigue pidiendo el blob ya revocado y la consola muestra
-    // `blob:... net::ERR_FILE_NOT_FOUND`.
-    function cleanup() {
-      video.removeAttribute('src')
-      video.load()
-      URL.revokeObjectURL(objectUrl)
-    }
+
+    video.onerror = () => fail('Error al cargar el video para generar thumbnail')
+
     video.src = objectUrl
   })
 }
@@ -146,10 +177,25 @@ async function uploadChunk(
         }),
       })
       
-      const data = await response.json()
-      
+      // Si la funcion se corta (timeout / memoria) Netlify responde HTML, no
+      // JSON: se lee como texto para dar un error entendible.
+      const text = await response.text()
+      let data: Record<string, any> = {}
+      try {
+        data = text ? JSON.parse(text) : {}
+      } catch {
+        data = {}
+      }
+
       if (!response.ok) {
-        throw new Error(data.error || data.message || 'Error al subir chunk')
+        if (response.status === 502 || response.status === 504) {
+          throw new Error(
+            isLastChunk
+              ? 'El servidor tardó demasiado uniendo el video. Intenta de nuevo o sube un archivo más liviano.'
+              : `El servidor no respondió al subir la parte ${chunkNumber + 1} (error ${response.status}).`
+          )
+        }
+        throw new Error(data.message || data.error || `Error al subir la parte ${chunkNumber + 1} (HTTP ${response.status})`)
       }
       
       // Si es el último chunk, devuelve la URL del video reensamblado
@@ -291,6 +337,8 @@ export function UploadModal({
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [videoDurationSec, setVideoDurationSec] = useState<number | null>(null)
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
+  // Archivo en curso, para descartar miniaturas que lleguen tarde.
+  const currentFileRef = useRef<File | null>(null)
   const [uploadProgress, setUploadProgress] = useState<number>(0)
   const [uploadChunkInfo, setUploadChunkInfo] = useState<{ current: number; total: number } | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -464,7 +512,10 @@ export function UploadModal({
   // Procesar archivo de video (compartido entre click y drag-and-drop)
   async function processVideoFile(file: File) {
     // Validar tipo
-    if (!file.type.startsWith('video/')) {
+    // Algunos navegadores dejan file.type vacio para .mov/.mkv: se acepta por extension.
+    const looksLikeVideo =
+      file.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(file.name)
+    if (!looksLikeVideo) {
       setUploadError('Selecciona un archivo de video válido')
       return
     }
@@ -476,6 +527,7 @@ export function UploadModal({
       return
     }
     
+    currentFileRef.current = file
     setVideoFile(file)
     setUploadError(null)
     setIsUploading(true)
@@ -483,15 +535,22 @@ export function UploadModal({
     setUploadChunkInfo(null)
     
     try {
-      // Generar thumbnail localmente
-      const thumbnail = await generateThumbnail(file)
-      setThumbnailUrl(thumbnail)
-      setUploadProgress(10)
+      // Miniatura local en paralelo: si el navegador no puede decodificar el
+      // video (HEVC, archivos muy pesados) se sigue sin ella. Antes se
+      // esperaba aqui y, si fallaba o se colgaba, la subida nunca arrancaba.
+      setThumbnailUrl(null)
+      generateThumbnail(file)
+        .then((thumbnail) => {
+          // Ignorar si el usuario ya quito o cambio el video.
+          if (currentFileRef.current === file) setThumbnailUrl(thumbnail)
+        })
+        .catch((err) => console.warn('Miniatura no disponible:', err))
+      setUploadProgress(1)
       
       // Subir video en chunks
       const { videoUrl: url, durationSec } = await uploadVideo(file, (progress, currentChunk, totalChunks) => {
-        // La subida va del 10% al 100%
-        const uploadProgress = 10 + (progress * 0.9)
+        // La subida va del 1% al 100%
+        const uploadProgress = Math.max(1, progress)
         setUploadProgress(uploadProgress)
         setUploadChunkInfo({ current: currentChunk, total: totalChunks })
       })
@@ -545,6 +604,7 @@ export function UploadModal({
   }
   
   function removeVideo() {
+    currentFileRef.current = null
     setVideoFile(null)
     setVideoUrl(null)
     setVideoDurationSec(null)
@@ -803,43 +863,50 @@ export function UploadModal({
           <Field label="Video del creativo">
             {videoFile ? (
               <div className="relative rounded-lg overflow-hidden" style={{ background: 'var(--bg-base)' }}>
-                {/* Thumbnail preview */}
-                {thumbnailUrl && (
-                  <div className="relative" style={{ aspectRatio: '16/9' }}>
-                    <img 
-                      src={thumbnailUrl} 
-                      alt="Preview" 
+                {/* Miniatura (si se pudo generar) o fondo neutro, siempre con el progreso encima */}
+                <div className="relative" style={{ aspectRatio: '16/9' }}>
+                  {thumbnailUrl ? (
+                    <img
+                      src={thumbnailUrl}
+                      alt="Preview"
                       className="w-full h-full object-cover"
                     />
-                    {/* Play icon overlay */}
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      {!isUploading && (
+                        <i className="ti ti-video text-[32px]" style={{ color: 'var(--text-muted)' }} />
+                      )}
+                    </div>
+                  )}
+                  {!isUploading && thumbnailUrl && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                       <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
                         <i className="ti ti-player-play text-white text-xl" />
                       </div>
                     </div>
-                    {/* Upload progress overlay */}
-                    {isUploading && (
-                      <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2">
-                        <div className="w-24 h-2 bg-white/20 rounded-full overflow-hidden">
-                          <div 
-                            className="h-full rounded-full transition-all duration-300"
-                            style={{ 
-                              width: `${uploadProgress}%`,
-                              background: 'var(--accent)',
-                            }}
-                          />
-                        </div>
-                        {uploadChunkInfo ? (
-                          <span className="text-white text-xs">
-                            Subiendo... {uploadChunkInfo.current}/{uploadChunkInfo.total} partes
-                          </span>
-                        ) : (
-                          <span className="text-white text-xs">Procesando...</span>
-                        )}
+                  )}
+                  {/* Upload progress overlay */}
+                  {isUploading && (
+                    <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2">
+                      <div className="w-40 h-2 bg-white/20 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-300"
+                          style={{
+                            width: `${uploadProgress}%`,
+                            background: 'var(--accent)',
+                          }}
+                        />
                       </div>
-                    )}
-                  </div>
-                )}
+                      {uploadChunkInfo ? (
+                        <span className="text-white text-xs">
+                          Subiendo... {uploadChunkInfo.current}/{uploadChunkInfo.total} partes ({Math.round(uploadProgress)}%)
+                        </span>
+                      ) : (
+                        <span className="text-white text-xs">Preparando subida...</span>
+                      )}
+                    </div>
+                  )}
+                </div>
                 {/* Video info */}
                 {!isUploading && (
                   <div className="p-2 flex items-center justify-between">
@@ -992,7 +1059,7 @@ export function UploadModal({
           onClick={handleSave}
           disabled={saving || isUploading}
         >
-          {saving ? 'Trayendo métricas de Meta…' : 'Guardar creativo'}
+          {saving ? 'Trayendo métricas de Meta…' : isUploading ? `Subiendo video… ${Math.round(uploadProgress)}%` : 'Guardar creativo'}
         </button>
       </div>
     </div>
